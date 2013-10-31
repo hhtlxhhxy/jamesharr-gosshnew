@@ -107,6 +107,10 @@ func username() string {
 type storedHostKey struct {
 	// keys map from an algorithm string to binary key data.
 	keys map[string][]byte
+
+	// checkCount counts the Check calls. Used for testing
+	// rekeying.
+	checkCount int
 }
 
 func (k *storedHostKey) Add(key ssh.PublicKey) {
@@ -117,6 +121,7 @@ func (k *storedHostKey) Add(key ssh.PublicKey) {
 }
 
 func (k *storedHostKey) Check(addr string, remote net.Addr, algo string, key []byte) error {
+	k.checkCount++
 	if k.keys == nil || bytes.Compare(key, k.keys[algo]) != 0 {
 		return fmt.Errorf("host key mismatch. Got %q, want %q", key, k.keys[algo])
 	}

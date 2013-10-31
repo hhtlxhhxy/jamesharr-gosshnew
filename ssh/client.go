@@ -16,8 +16,9 @@ import (
 
 // ClientConn represents the client side of an SSH connection.
 type ClientConn struct {
-	transport   *transport
-	config      *ClientConfig
+	transport rekeyingTransport
+	config    *ClientConfig
+	sshConn
 	chanList    // channels associated with this connection
 	forwardList // forwarded tcpip connections from the remote side
 	globalRequest
@@ -40,28 +41,18 @@ func Client(c net.Conn, config *ClientConfig) (*ClientConn, error) {
 
 func clientWithAddress(c net.Conn, addr string, config *ClientConfig) (*ClientConn, error) {
 	conn := &ClientConn{
-		transport:     newTransport(c, config.rand(), true /* is client */),
 		config:        config,
+		sshConn:       sshConn{c, c},
 		globalRequest: globalRequest{response: make(chan interface{}, 1)},
 		dialAddress:   addr,
 	}
 
 	if err := conn.handshake(); err != nil {
-		conn.transport.Close()
-		return nil, fmt.Errorf("handshake failed: %v", err)
+		return nil, fmt.Errorf("ssh: handshake failed: %v", err)
 	}
 	go conn.mainLoop()
 	return conn, nil
 }
-
-// Close closes the connection.
-func (c *ClientConn) Close() error { return c.transport.Close() }
-
-// LocalAddr returns the local network address.
-func (c *ClientConn) LocalAddr() net.Addr { return c.transport.LocalAddr() }
-
-// RemoteAddr returns the remote network address.
-func (c *ClientConn) RemoteAddr() net.Addr { return c.transport.RemoteAddr() }
 
 // handshake performs the client side key exchange. See RFC 4253 Section 7.
 func (c *ClientConn) handshake() error {
@@ -70,107 +61,44 @@ func (c *ClientConn) handshake() error {
 		clientVersion = []byte(c.config.ClientVersion)
 	}
 
-	serverVersion, err := exchangeVersions(c.transport.Conn, clientVersion)
+	serverVersion, err := exchangeVersions(c.sshConn.conn, clientVersion)
 	if err != nil {
 		return err
 	}
 	c.serverVersion = string(serverVersion)
 
-	clientKexInit := kexInitMsg{
-		KexAlgos:                c.config.Crypto.kexes(),
-		ServerHostKeyAlgos:      supportedHostKeyAlgos,
-		CiphersClientServer:     c.config.Crypto.ciphers(),
-		CiphersServerClient:     c.config.Crypto.ciphers(),
-		MACsClientServer:        c.config.Crypto.macs(),
-		MACsServerClient:        c.config.Crypto.macs(),
-		CompressionClientServer: supportedCompressions,
-		CompressionServerClient: supportedCompressions,
-	}
-	kexInitPacket := marshal(msgKexInit, clientKexInit)
-	if err := c.transport.writePacket(kexInitPacket); err != nil {
-		return err
-	}
-	packet, err := c.transport.readPacket()
-	if err != nil {
+	c.transport = newClientTransport(
+		newTransport(c.sshConn.conn, c.config.rand(), true /* is client */),
+		clientVersion, serverVersion, c.config, c.dialAddress, c.sshConn.RemoteAddr())
+	if err := c.transport.requestKeyChange(); err != nil {
 		return err
 	}
 
-	var serverKexInit kexInitMsg
-	if err = unmarshal(&serverKexInit, packet, msgKexInit); err != nil {
+	if packet, err := c.transport.readPacket(); err != nil {
 		return err
-	}
-
-	algs := findAgreedAlgorithms(&clientKexInit, &serverKexInit)
-	if algs == nil {
-		return errors.New("ssh: no common algorithms")
-	}
-
-	if serverKexInit.FirstKexFollows && algs.kex != serverKexInit.KexAlgos[0] {
-		// The server sent a Kex message for the wrong algorithm,
-		// which we have to ignore.
-		if _, err := c.transport.readPacket(); err != nil {
-			return err
-		}
-	}
-
-	kex, ok := kexAlgoMap[algs.kex]
-	if !ok {
-		return fmt.Errorf("ssh: unexpected key exchange algorithm %v", algs.kex)
-	}
-
-	magics := handshakeMagics{
-		clientVersion: clientVersion,
-		serverVersion: serverVersion,
-		clientKexInit: kexInitPacket,
-		serverKexInit: packet,
-	}
-	result, err := kex.Client(c.transport, c.config.rand(), &magics)
-	if err != nil {
-		return err
-	}
-
-	err = verifyHostKeySignature(algs.hostKey, result.HostKey, result.H, result.Signature)
-	if err != nil {
-		return err
-	}
-
-	if checker := c.config.HostKeyChecker; checker != nil {
-		err = checker.Check(c.dialAddress, c.transport.RemoteAddr(), algs.hostKey, result.HostKey)
-		if err != nil {
-			return err
-		}
-	}
-
-	c.transport.prepareKeyChange(algs, result)
-
-	if err = c.transport.writePacket([]byte{msgNewKeys}); err != nil {
-		return err
-	}
-	if packet, err = c.transport.readPacket(); err != nil {
-		return err
-	}
-	if packet[0] != msgNewKeys {
+	} else if packet[0] != msgNewKeys {
 		return UnexpectedMessageError{msgNewKeys, packet[0]}
 	}
 	return c.authenticate()
 }
 
-// Verify the host key obtained in the key exchange.
-func verifyHostKeySignature(hostKeyAlgo string, hostKeyBytes []byte, data []byte, signature []byte) error {
-	hostKey, rest, ok := ParsePublicKey(hostKeyBytes)
+// verifyHostKeySignature verifies the host key obtained in the key
+// exchange.
+func verifyHostKeySignature(hostKeyAlgo string, result *kexResult) error {
+	hostKey, rest, ok := ParsePublicKey(result.HostKey)
 	if len(rest) > 0 || !ok {
 		return errors.New("ssh: could not parse hostkey")
 	}
 
-	sig, rest, ok := parseSignatureBody(signature)
+	sig, rest, ok := parseSignatureBody(result.Signature)
 	if len(rest) > 0 || !ok {
 		return errors.New("ssh: signature parse error")
 	}
 	if sig.Format != hostKeyAlgo {
-		return fmt.Errorf("ssh: unexpected signature type %q", sig.Format)
+		return fmt.Errorf("ssh: got signature type %q, want %q", sig.Format, hostKeyAlgo)
 	}
 
-	if !hostKey.Verify(data, sig.Blob) {
+	if !hostKey.Verify(result.H, sig.Blob) {
 		return errors.New("ssh: host key signature error")
 	}
 	return nil
@@ -235,6 +163,9 @@ func (c *ClientConn) mainLoop() {
 				}
 				ch.stderr.write(packet)
 			}
+
+		case msgNewKeys:
+			// A rekeying happened.
 		default:
 			decoded, err := decode(packet)
 			if err != nil {

@@ -123,6 +123,45 @@ func TestFuncLargeRead(t *testing.T) {
 	}
 }
 
+func TestKeyChange(t *testing.T) {
+	server := newServer(t)
+	defer server.Shutdown()
+	conf := clientConfig()
+	conf.Crypto.RekeyThreshold = 1024
+	conn := server.Dial(conf)
+	defer conn.Close()
+
+	for i := 0; i < 4; i++ {
+		session, err := conn.NewSession()
+		if err != nil {
+			t.Fatalf("unable to create new session: %s", err)
+		}
+
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			t.Fatalf("unable to acquire stdout pipe: %s", err)
+		}
+
+		err = session.Start("dd if=/dev/urandom bs=1024 count=1")
+		if err != nil {
+			t.Fatalf("unable to execute remote command: %s", err)
+		}
+		buf := new(bytes.Buffer)
+		n, err := io.Copy(buf, stdout)
+		if err != nil {
+			t.Fatalf("error reading from remote stdout: %s", err)
+		}
+
+		if n != 1024 {
+			t.Fatalf("Expected %d bytes but read only %d from remote command", 2048, n)
+		}
+	}
+
+	if changes := conf.HostKeyChecker.(*storedHostKey).checkCount; changes < 4 {
+		t.Errorf("got %d key changes, want 4", changes)
+	}
+}
+
 func TestInvalidTerminalMode(t *testing.T) {
 	server := newServer(t)
 	defer server.Shutdown()

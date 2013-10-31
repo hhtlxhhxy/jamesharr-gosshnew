@@ -9,7 +9,6 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -97,8 +96,9 @@ const maxCachedPubKeys = 16
 
 // A ServerConn represents an incoming connection.
 type ServerConn struct {
-	transport *transport
+	transport *handshakeTransport
 	config    *ServerConfig
+	sshConn
 
 	channels   map[uint32]*serverChan
 	nextChanId uint32
@@ -130,9 +130,9 @@ type ServerConn struct {
 // using c as the underlying transport.
 func Server(c net.Conn, config *ServerConfig) *ServerConn {
 	return &ServerConn{
-		transport: newTransport(c, config.rand(), false /* not client */),
-		channels:  make(map[uint32]*serverChan),
-		config:    config,
+		sshConn:  sshConn{c, c},
+		channels: make(map[uint32]*serverChan),
+		config:   config,
 	}
 }
 
@@ -147,33 +147,35 @@ func signAndMarshal(k Signer, rand io.Reader, data []byte) ([]byte, error) {
 	return serializeSignature(k.PublicKey().PrivateKeyAlgo(), sig), nil
 }
 
-// Close closes the connection.
-func (s *ServerConn) Close() error { return s.transport.Close() }
-
-// LocalAddr returns the local network address.
-func (c *ServerConn) LocalAddr() net.Addr { return c.transport.LocalAddr() }
-
-// RemoteAddr returns the remote network address.
-func (c *ServerConn) RemoteAddr() net.Addr { return c.transport.RemoteAddr() }
-
 // Handshake performs an SSH transport and client authentication on the given ServerConn.
 func (s *ServerConn) Handshake() error {
 	var err error
 	s.serverVersion = []byte(packageVersion)
-	s.ClientVersion, err = exchangeVersions(s.transport.Conn, s.serverVersion)
+	s.ClientVersion, err = exchangeVersions(s.sshConn.conn, s.serverVersion)
 	if err != nil {
 		return err
 	}
-	if err := s.clientInitHandshake(nil, nil); err != nil {
+
+	tr := newTransport(s.sshConn.conn, s.config.rand(), false /* not client */)
+	s.transport = newServerTransport(tr, s.ClientVersion, s.serverVersion, s.config)
+
+	if err := s.transport.requestKeyChange(); err != nil {
 		return err
+	}
+
+	if packet, err := s.transport.readPacket(); err != nil {
+		return err
+	} else if packet[0] != msgNewKeys {
+		return UnexpectedMessageError{msgNewKeys, packet[0]}
 	}
 
 	var packet []byte
 	if packet, err = s.transport.readPacket(); err != nil {
 		return err
 	}
+
 	var serviceRequest serviceRequestMsg
-	if err := unmarshal(&serviceRequest, packet, msgServiceRequest); err != nil {
+	if err = unmarshal(&serviceRequest, packet, msgServiceRequest); err != nil {
 		return err
 	}
 	if serviceRequest.Service != serviceUserAuth {
@@ -190,88 +192,6 @@ func (s *ServerConn) Handshake() error {
 		return err
 	}
 	return err
-}
-
-func (s *ServerConn) clientInitHandshake(clientKexInit *kexInitMsg, clientKexInitPacket []byte) (err error) {
-	serverKexInit := kexInitMsg{
-		KexAlgos:                s.config.Crypto.kexes(),
-		CiphersClientServer:     s.config.Crypto.ciphers(),
-		CiphersServerClient:     s.config.Crypto.ciphers(),
-		MACsClientServer:        s.config.Crypto.macs(),
-		MACsServerClient:        s.config.Crypto.macs(),
-		CompressionClientServer: supportedCompressions,
-		CompressionServerClient: supportedCompressions,
-	}
-	for _, k := range s.config.hostKeys {
-		serverKexInit.ServerHostKeyAlgos = append(
-			serverKexInit.ServerHostKeyAlgos, k.PublicKey().PublicKeyAlgo())
-	}
-
-	serverKexInitPacket := marshal(msgKexInit, serverKexInit)
-	if err = s.transport.writePacket(serverKexInitPacket); err != nil {
-		return
-	}
-
-	if clientKexInitPacket == nil {
-		clientKexInit = new(kexInitMsg)
-		if clientKexInitPacket, err = s.transport.readPacket(); err != nil {
-			return
-		}
-		if err = unmarshal(clientKexInit, clientKexInitPacket, msgKexInit); err != nil {
-			return
-		}
-	}
-
-	algs := findAgreedAlgorithms(clientKexInit, &serverKexInit)
-	if algs == nil {
-		return errors.New("ssh: no common algorithms")
-	}
-
-	if clientKexInit.FirstKexFollows && algs.kex != clientKexInit.KexAlgos[0] {
-		// The client sent a Kex message for the wrong algorithm,
-		// which we have to ignore.
-		if _, err = s.transport.readPacket(); err != nil {
-			return
-		}
-	}
-
-	var hostKey Signer
-	for _, k := range s.config.hostKeys {
-		if algs.hostKey == k.PublicKey().PublicKeyAlgo() {
-			hostKey = k
-		}
-	}
-
-	kex, ok := kexAlgoMap[algs.kex]
-	if !ok {
-		return fmt.Errorf("ssh: unexpected key exchange algorithm %v", algs.kex)
-	}
-
-	magics := handshakeMagics{
-		serverVersion: s.serverVersion,
-		clientVersion: s.ClientVersion,
-		serverKexInit: marshal(msgKexInit, serverKexInit),
-		clientKexInit: clientKexInitPacket,
-	}
-	result, err := kex.Server(s.transport, s.config.rand(), &magics, hostKey)
-	if err != nil {
-		return err
-	}
-
-	if err = s.transport.prepareKeyChange(algs, result); err != nil {
-		return err
-	}
-
-	if err = s.transport.writePacket([]byte{msgNewKeys}); err != nil {
-		return
-	}
-	if packet, err := s.transport.readPacket(); err != nil {
-		return err
-	} else if packet[0] != msgNewKeys {
-		return UnexpectedMessageError{msgNewKeys, packet[0]}
-	}
-
-	return
 }
 
 func isAcceptableAlgo(algo string) bool {
@@ -409,13 +329,16 @@ userAuthLoop:
 				if !isAcceptableAlgo(algo) || !isAcceptableAlgo(sig.Format) || pubAlgoToPrivAlgo(algo) != sig.Format {
 					break
 				}
-				signedData := buildDataSignedForAuth(s.transport.sessionID, userAuthReq, algoBytes, pubKey)
+				signedData := buildDataSignedForAuth(s.transport.getSessionID(), userAuthReq, algoBytes, pubKey)
 				key, _, ok := ParsePublicKey(pubKey)
 				if !ok {
 					return ParseError{msgUserAuthRequest}
 				}
 
 				if !key.Verify(signedData, sig.Blob) {
+					// TODO(hanwen): fix this
+					// message. It's not a parse
+					// error
 					return ParseError{msgUserAuthRequest}
 				}
 				// TODO(jmpittman): Implement full validation for certificates.
@@ -522,7 +445,6 @@ func (s *ServerConn) Accept() (Channel, error) {
 	for {
 		packet, err := s.transport.readPacket()
 		if err != nil {
-
 			s.lock.Lock()
 			s.err = err
 			s.lock.Unlock()
@@ -537,6 +459,9 @@ func (s *ServerConn) Accept() (Channel, error) {
 		}
 
 		switch packet[0] {
+		case msgNewKeys:
+			// Lower level changed keys. Do nothing.
+
 		case msgChannelData:
 			if len(packet) < 9 {
 				// malformed data packet
@@ -633,13 +558,6 @@ func (s *ServerConn) Accept() (Channel, error) {
 					}
 				}
 
-			case *kexInitMsg:
-				s.lock.Lock()
-				if err := s.clientInitHandshake(msg, packet); err != nil {
-					s.lock.Unlock()
-					return nil, err
-				}
-				s.lock.Unlock()
 			case *disconnectMsg:
 				return nil, io.EOF
 			default:

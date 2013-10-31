@@ -7,6 +7,7 @@ package ssh
 import (
 	"crypto"
 	"fmt"
+	"net"
 	"sync"
 
 	_ "crypto/sha1"
@@ -149,6 +150,10 @@ func findAgreedAlgorithms(clientKexInit, serverKexInit *kexInitMsg) (algs *algor
 
 // Cryptographic configuration common to both ServerConfig and ClientConfig.
 type CryptoConfig struct {
+	// The maximum number of bytes sent or received after which a
+	// new key is negotiated.
+	RekeyThreshold uint64
+
 	// The allowed key exchanges algorithms. If unspecified then a
 	// default set of algorithms is used.
 	KeyExchanges []string
@@ -349,4 +354,17 @@ func (w *window) reserve(win uint32) uint32 {
 	w.win -= win
 	w.L.Unlock()
 	return win
+}
+
+type netConnMethods interface {
+	Close() error
+	RemoteAddr() net.Addr
+	LocalAddr() net.Addr
+}
+
+// sshconn provides net.Conn metadata, but disallows direct reads and
+// writes.
+type sshConn struct {
+	netConnMethods
+	conn net.Conn
 }

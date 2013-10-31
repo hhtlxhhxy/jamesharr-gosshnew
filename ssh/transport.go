@@ -12,7 +12,6 @@ import (
 	"errors"
 	"hash"
 	"io"
-	"net"
 	"sync"
 )
 
@@ -46,11 +45,20 @@ type transport struct {
 	reader
 	writer
 
-	net.Conn
+	io.Closer
 
 	// Initial H used for the session ID. Once assigned this does
 	// not change, even during subsequent key exchanges.
 	sessionID []byte
+}
+
+func (t *transport) getSessionID() []byte {
+	if t.sessionID == nil {
+		panic("session ID not set yet")
+	}
+	s := make([]byte, len(t.sessionID))
+	copy(s, t.sessionID)
+	return s
 }
 
 // reader represents the incoming connection state.
@@ -170,20 +178,12 @@ func (r *reader) readPacket() ([]byte, error) {
 
 // Read and decrypt next packet discarding debug and noop messages.
 func (t *transport) readPacket() ([]byte, error) {
-	for {
-		packet, err := t.reader.readPacket()
-		if err != nil {
-			return nil, err
-		}
-		if len(packet) == 0 {
-			return nil, errors.New("ssh: zero length packet")
-		}
-
-		if packet[0] != msgIgnore && packet[0] != msgDebug {
-			return packet, nil
-		}
+	packet, err := t.reader.readPacket()
+	if err == nil && len(packet) == 0 {
+		err = errors.New("ssh: zero length packet")
 	}
-	panic("unreachable")
+
+	return packet, err
 }
 
 // Encrypt and send a packet of data to the remote peer.
@@ -267,24 +267,24 @@ func (w *writer) writePacket(packet []byte) error {
 	return err
 }
 
-func newTransport(conn net.Conn, rand io.Reader, isClient bool) *transport {
+func newTransport(rwc io.ReadWriteCloser, rand io.Reader, isClient bool) *transport {
 	t := &transport{
 		reader: reader{
-			Reader: bufio.NewReader(conn),
+			Reader: bufio.NewReader(rwc),
 			common: common{
 				cipher:           noneCipher{},
 				pendingKeyChange: make(chan *kexResult, 1),
 			},
 		},
 		writer: writer{
-			Writer: bufio.NewWriter(conn),
+			Writer: bufio.NewWriter(rwc),
 			rand:   rand,
 			common: common{
 				cipher:           noneCipher{},
 				pendingKeyChange: make(chan *kexResult, 1),
 			},
 		},
-		Conn: conn,
+		Closer: rwc,
 	}
 	if isClient {
 		t.reader.dir = serverKeys

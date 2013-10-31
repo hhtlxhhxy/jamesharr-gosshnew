@@ -25,11 +25,12 @@ func (c *ClientConn) authenticate() error {
 	if err := unmarshal(&serviceAccept, packet, msgServiceAccept); err != nil {
 		return err
 	}
+
 	// during the authentication phase the client first attempts the "none" method
 	// then any untried methods suggested by the server.
 	tried, remain := make(map[string]bool), make(map[string]bool)
 	for auth := ClientAuth(new(noneAuth)); auth != nil; {
-		ok, methods, err := auth.auth(c.transport.sessionID, c.config.User, c.transport, c.config.rand())
+		ok, methods, err := auth.auth(c.transport.getSessionID(), c.config.User, c.transport, c.config.rand())
 		if err != nil {
 			return err
 		}
