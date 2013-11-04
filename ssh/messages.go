@@ -203,6 +203,7 @@ type channelEOFMsg struct {
 type globalRequestMsg struct {
 	Type      string
 	WantReply bool
+	Data      []byte `ssh:"rest"`
 }
 
 // See RFC 4254, section 4

@@ -13,9 +13,6 @@ import (
 	"sync"
 )
 
-// If set, debug will log print messages sent and received.
-const debug = false
-
 // keyingTransport is a packet based transport that supports key
 // changes. It need not be thread-safe. It should pass through
 // msgNewKeys in both directions.
