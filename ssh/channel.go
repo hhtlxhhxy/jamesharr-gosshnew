@@ -462,11 +462,10 @@ type clientChan struct {
 // newClientChan returns a partially constructed *clientChan
 // using the local id provided. To be usable clientChan.remoteId
 // needs to be assigned once known.
-func newClientChan(cc packetConn, id uint32) *clientChan {
+func newClientChan(cc packetConn) *clientChan {
 	c := &clientChan{
 		channel: channel{
 			packetConn: cc,
-			localId:    id,
 			remoteWin:  window{Cond: newCond()},
 		},
 		msg: make(chan interface{}, 16),

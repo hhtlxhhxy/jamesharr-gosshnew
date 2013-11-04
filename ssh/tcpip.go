@@ -295,7 +295,8 @@ type channelOpenDirectMsg struct {
 // dial opens a direct-tcpip connection to the remote server. laddr and raddr are passed as
 // strings and are expected to be resolvable at the remote end.
 func (c *ClientConn) dial(laddr string, lport int, raddr string, rport int) (*tcpChan, error) {
-	ch := c.newChan(c.transport)
+	ch := newClientChan(c.transport)
+	ch.localId = c.chanList.add(ch)
 	if err := c.transport.writePacket(marshal(msgChannelOpen, channelOpenDirectMsg{
 		ChanType:      "direct-tcpip",
 		PeersId:       ch.localId,

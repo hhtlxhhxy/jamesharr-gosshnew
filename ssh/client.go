@@ -16,11 +16,11 @@ import (
 
 // ClientConn represents the client side of an SSH connection.
 type ClientConn struct {
-	transport rekeyingTransport
-	config    *ClientConfig
 	sshConn
-	chanList    // channels associated with this connection
-	forwardList // forwarded tcpip connections from the remote side
+	transport   rekeyingTransport
+	config      *ClientConfig
+	chanList    chanList // channels associated with this connection
+	forwardList          // forwarded tcpip connections from the remote side
 	globalRequest
 
 	// Address as passed to the Dial function.
@@ -109,7 +109,10 @@ func verifyHostKeySignature(hostKeyAlgo string, result *kexResult) error {
 func (c *ClientConn) mainLoop() {
 	defer func() {
 		c.transport.Close()
-		c.chanList.closeAll()
+		for _, ch := range c.chanList.dropAll() {
+			ch.Close()
+			close(ch.msg)
+		}
 		c.forwardList.closeAll()
 	}()
 
@@ -135,8 +138,8 @@ func (c *ClientConn) mainLoop() {
 			if length != uint32(len(packet)) {
 				return
 			}
-			ch, ok := c.getChan(remoteId)
-			if !ok {
+			ch := c.chanList.getChan(remoteId)
+			if ch == nil {
 				return
 			}
 			ch.stdout.write(packet)
@@ -157,8 +160,8 @@ func (c *ClientConn) mainLoop() {
 			// for stderr on interactive sessions. Other data types are
 			// silently discarded.
 			if datatype == 1 {
-				ch, ok := c.getChan(remoteId)
-				if !ok {
+				ch := c.chanList.getChan(remoteId)
+				if ch == nil {
 					return
 				}
 				ch.stderr.write(packet)
@@ -179,28 +182,28 @@ func (c *ClientConn) mainLoop() {
 			case *channelOpenMsg:
 				c.handleChanOpen(msg)
 			case *channelOpenConfirmMsg:
-				ch, ok := c.getChan(msg.PeersId)
-				if !ok {
+				ch := c.chanList.getChan(msg.PeersId)
+				if ch == nil {
 					return
 				}
 				ch.msg <- msg
 			case *channelOpenFailureMsg:
-				ch, ok := c.getChan(msg.PeersId)
-				if !ok {
+				ch := c.chanList.getChan(msg.PeersId)
+				if ch == nil {
 					return
 				}
 				ch.msg <- msg
 			case *channelCloseMsg:
-				ch, ok := c.getChan(msg.PeersId)
-				if !ok {
+				ch := c.chanList.getChan(msg.PeersId)
+				if ch == nil {
 					return
 				}
 				ch.Close()
 				close(ch.msg)
 				c.chanList.remove(msg.PeersId)
 			case *channelEOFMsg:
-				ch, ok := c.getChan(msg.PeersId)
-				if !ok {
+				ch := c.chanList.getChan(msg.PeersId)
+				if ch == nil {
 					return
 				}
 				ch.stdout.eof()
@@ -208,26 +211,26 @@ func (c *ClientConn) mainLoop() {
 				// it is logical to signal EOF at the same time.
 				ch.stderr.eof()
 			case *channelRequestSuccessMsg:
-				ch, ok := c.getChan(msg.PeersId)
-				if !ok {
+				ch := c.chanList.getChan(msg.PeersId)
+				if ch == nil {
 					return
 				}
 				ch.msg <- msg
 			case *channelRequestFailureMsg:
-				ch, ok := c.getChan(msg.PeersId)
-				if !ok {
+				ch := c.chanList.getChan(msg.PeersId)
+				if ch == nil {
 					return
 				}
 				ch.msg <- msg
 			case *channelRequestMsg:
-				ch, ok := c.getChan(msg.PeersId)
-				if !ok {
+				ch := c.chanList.getChan(msg.PeersId)
+				if ch == nil {
 					return
 				}
 				ch.msg <- msg
 			case *windowAdjustMsg:
-				ch, ok := c.getChan(msg.PeersId)
-				if !ok {
+				ch := c.chanList.getChan(msg.PeersId)
+				if ch == nil {
 					return
 				}
 				if !ch.remoteWin.add(msg.AdditionalBytes) {
@@ -281,7 +284,9 @@ func (c *ClientConn) handleChanOpen(msg *channelOpenMsg) {
 			c.sendConnectionFailed(msg.PeersId)
 			return
 		}
-		ch := c.newChan(c.transport)
+
+		ch := newClientChan(c.transport)
+		ch.localId = c.chanList.add(ch)
 		ch.remoteId = msg.PeersId
 		ch.remoteWin.add(msg.PeersWindow)
 		ch.maxPacket = msg.MaxPacketSize
@@ -401,57 +406,71 @@ func (c *ClientConfig) rand() io.Reader {
 	return c.Rand
 }
 
-// Thread safe channel list.
+// chanList is a thread safe channel list.
 type chanList struct {
 	// protects concurrent access to chans
 	sync.Mutex
-	// chans are indexed by the local id of the channel, clientChan.localId.
-	// The PeersId value of messages received by ClientConn.mainLoop is
-	// used to locate the right local clientChan in this slice.
+
+	// we determine the local ID of the channel through the index
+	// in this slice. When referring to a channel, the remote side
+	// sends along our ID, in the PeersId field of the channel
+	// message.
 	chans []*clientChan
+
+	// This is a debugging aid: it offsets all IDs by this
+	// amount. This helps distinguish otherwise identical
+	// server/client muxes
+	offset uint32
 }
 
-// Allocate a new ClientChan with the next avail local id.
-func (c *chanList) newChan(p packetConn) *clientChan {
+// add assigns an ID to the given channel.
+func (c *chanList) add(ch *clientChan) uint32 {
 	c.Lock()
 	defer c.Unlock()
 	for i := range c.chans {
 		if c.chans[i] == nil {
-			ch := newClientChan(p, uint32(i))
 			c.chans[i] = ch
-			return ch
+			return uint32(i) + c.offset
 		}
 	}
-	i := len(c.chans)
-	ch := newClientChan(p, uint32(i))
 	c.chans = append(c.chans, ch)
-	return ch
+	return uint32(len(c.chans)-1) + c.offset
 }
 
-func (c *chanList) getChan(id uint32) (*clientChan, bool) {
+// getChan returns the channel for the given ID, or nil if it is
+// unknown.
+func (c *chanList) getChan(id uint32) *clientChan {
+	id -= c.offset
+
 	c.Lock()
 	defer c.Unlock()
-	if id >= uint32(len(c.chans)) {
-		return nil, false
+	if id < uint32(len(c.chans)) {
+		return c.chans[id]
 	}
-	return c.chans[id], true
+	return nil
 }
 
+// remove drops the ID for our channel list.
 func (c *chanList) remove(id uint32) {
+	id -= c.offset
 	c.Lock()
-	defer c.Unlock()
-	c.chans[id] = nil
+	if id < uint32(len(c.chans)) {
+		c.chans[id] = nil
+	}
+	c.Unlock()
 }
 
-func (c *chanList) closeAll() {
+// dropAll forgets all channels it knows, returning them in a slice.
+func (c *chanList) dropAll() []*clientChan {
+	var r []*clientChan
 	c.Lock()
 	defer c.Unlock()
-
 	for _, ch := range c.chans {
 		if ch == nil {
 			continue
 		}
-		ch.Close()
-		close(ch.msg)
+		r = append(r, ch)
 	}
+	c.chans = nil
+	return r
 }

@@ -563,7 +563,8 @@ func (s *Session) StderrPipe() (io.Reader, error) {
 
 // NewSession returns a new interactive session on the remote host.
 func (c *ClientConn) NewSession() (*Session, error) {
-	ch := c.newChan(c.transport)
+	ch := newClientChan(c.transport)
+	ch.localId = c.chanList.add(ch)
 	if err := c.transport.writePacket(marshal(msgChannelOpen, channelOpenMsg{
 		ChanType:      "session",
 		PeersId:       ch.localId,
