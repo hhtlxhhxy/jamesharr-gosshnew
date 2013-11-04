@@ -123,6 +123,9 @@ func (t *handshakeTransport) setCryptoConfig(c *CryptoConfig) {
 		// RFC 4253, section 9 suggests rekeying after 1G.
 		t.rekeyThreshold = 1 << 30
 	}
+	if t.rekeyThreshold < minRekeyThreshold {
+		t.rekeyThreshold = minRekeyThreshold
+	}
 }
 
 func (t *handshakeTransport) id() string {

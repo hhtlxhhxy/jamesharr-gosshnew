@@ -152,8 +152,9 @@ func TestKeyChange(t *testing.T) {
 			t.Fatalf("error reading from remote stdout: %s", err)
 		}
 
-		if n != 1024 {
-			t.Fatalf("Expected %d bytes but read only %d from remote command", 2048, n)
+		want := int64(1024)
+		if n != want {
+			t.Fatalf("Expected %d bytes but read only %d from remote command", want, n)
 		}
 	}
 

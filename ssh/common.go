@@ -148,10 +148,15 @@ func findAgreedAlgorithms(clientKexInit, serverKexInit *kexInitMsg) (algs *algor
 	return result
 }
 
+// If rekeythreshold is too small, we can't make any progress sending
+// stuff.
+const minRekeyThreshold uint64 = 256
+
 // Cryptographic configuration common to both ServerConfig and ClientConfig.
 type CryptoConfig struct {
 	// The maximum number of bytes sent or received after which a
-	// new key is negotiated.
+	// new key is negotiated. It must be at least 256. If
+	// unspecified, 1 gigabyte is used.
 	RekeyThreshold uint64
 
 	// The allowed key exchanges algorithms. If unspecified then a
