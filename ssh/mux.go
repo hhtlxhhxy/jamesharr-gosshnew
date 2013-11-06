@@ -15,7 +15,7 @@ import (
 )
 
 // If set, debug will log print messages sent and received.
-const debug = true
+const debug = false
 
 // nChanList is identifcal to chanList except for the channel type. It
 // will be renamed once we make the existing code use nChannel +

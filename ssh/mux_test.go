@@ -433,3 +433,10 @@ func TestMuxMaxPacketSize(t *testing.T) {
 		t.Errorf("connection still alive after receiving large packet.")
 	}
 }
+
+// Don't ship code with debug=true.
+func TestDebug(t *testing.T) {
+	if debug {
+		t.Error("debug switched on")
+	}
+}
