@@ -18,7 +18,7 @@ import (
 	"code.google.com/p/go.crypto/ssh/terminal"
 )
 
-type serverType func(*serverChan, *testing.T)
+type serverType func(*nChannel, *testing.T)
 
 // dial constructs a new test server and returns a *ClientConn.
 func dial(handler serverType, t *testing.T) *ClientConn {
@@ -56,10 +56,13 @@ func dial(handler serverType, t *testing.T) *ClientConn {
 				ch.Reject(UnknownChannelType, "unknown channel type")
 				continue
 			}
-			ch.Accept()
+
+			if err = ch.Accept(); err != nil {
+				t.Errorf("Accept: %v", err)
+			}
 			go func() {
 				defer close(done)
-				handler(ch.(*serverChan), t)
+				handler(ch.(*compatChannel).nChannel, t)
 			}()
 		}
 		<-done
@@ -330,130 +333,7 @@ func TestExitWithoutStatusOrSignal(t *testing.T) {
 	}
 }
 
-func TestInvalidServerMessage(t *testing.T) {
-	conn := dial(sendInvalidRecord, t)
-	defer conn.Close()
-	session, err := conn.NewSession()
-	if err != nil {
-		t.Fatalf("Unable to request new session: %v", err)
-	}
-	// Make sure that we closed all the clientChans when the connection
-	// failed.
-	session.wait()
-
-	defer session.Close()
-}
-
-// In the wild some clients (and servers) send zero sized window updates.
-// Test that the client can continue after receiving a zero sized update.
-func TestClientZeroWindowAdjust(t *testing.T) {
-	conn := dial(sendZeroWindowAdjust, t)
-	defer conn.Close()
-	session, err := conn.NewSession()
-	if err != nil {
-		t.Fatalf("Unable to request new session: %v", err)
-	}
-	defer session.Close()
-
-	if err := session.Shell(); err != nil {
-		t.Fatalf("Unable to execute command: %v", err)
-	}
-	err = session.Wait()
-	if err != nil {
-		t.Fatalf("expected nil but got %v", err)
-	}
-}
-
-// Verify that the client never sends a packet larger than maxpacket.
-func TestClientStdinRespectsMaxPacketSize(t *testing.T) {
-	conn := dial(discardHandler, t)
-	defer conn.Close()
-	session, err := conn.NewSession()
-	if err != nil {
-		t.Fatalf("failed to request new session: %v", err)
-	}
-	defer session.Close()
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		t.Fatalf("failed to obtain stdinpipe: %v", err)
-	}
-	const size = 100 * 1000
-	for i := 0; i < 10; i++ {
-		n, err := stdin.Write(make([]byte, size))
-		if n != size || err != nil {
-			t.Fatalf("failed to write: %d, %v", n, err)
-		}
-	}
-}
-
-// Verify that the client never accepts a packet larger than maxpacket.
-func TestServerStdoutRespectsMaxPacketSize(t *testing.T) {
-	conn := dial(largeSendHandler, t)
-	defer conn.Close()
-	session, err := conn.NewSession()
-	if err != nil {
-		t.Fatalf("Unable to request new session: %v", err)
-	}
-	defer session.Close()
-	out, err := session.StdoutPipe()
-	if err != nil {
-		t.Fatalf("Unable to connect to Stdout: %v", err)
-	}
-	if err := session.Shell(); err != nil {
-		t.Fatalf("Unable to execute command: %v", err)
-	}
-	if _, err := ioutil.ReadAll(out); err != nil {
-		t.Fatalf("failed to read: %v", err)
-	}
-}
-
-func TestClientCannotSendAfterEOF(t *testing.T) {
-	conn := dial(exitWithoutSignalOrStatus, t)
-	defer conn.Close()
-	session, err := conn.NewSession()
-	if err != nil {
-		t.Fatalf("Unable to request new session: %v", err)
-	}
-	defer session.Close()
-	in, err := session.StdinPipe()
-	if err != nil {
-		t.Fatalf("Unable to connect channel stdin: %v", err)
-	}
-	if err := session.Shell(); err != nil {
-		t.Fatalf("Unable to execute command: %v", err)
-	}
-	if err := in.Close(); err != nil {
-		t.Fatalf("Unable to close stdin: %v", err)
-	}
-	if _, err := in.Write([]byte("foo")); err == nil {
-		t.Fatalf("Session write should fail")
-	}
-}
-
-func TestClientCannotSendAfterClose(t *testing.T) {
-	conn := dial(exitWithoutSignalOrStatus, t)
-	defer conn.Close()
-	session, err := conn.NewSession()
-	if err != nil {
-		t.Fatalf("Unable to request new session: %v", err)
-	}
-	defer session.Close()
-	in, err := session.StdinPipe()
-	if err != nil {
-		t.Fatalf("Unable to connect channel stdin: %v", err)
-	}
-	if err := session.Shell(); err != nil {
-		t.Fatalf("Unable to execute command: %v", err)
-	}
-	// close underlying channel
-	if err := session.ch.Close(); err != nil {
-		t.Fatalf("Unable to close session: %v", err)
-	}
-	if _, err := in.Write([]byte("foo")); err == nil {
-		t.Fatalf("Session write should fail")
-	}
-}
-
+// TODO(hanwen): this test should be at the transport level.
 func TestClientCannotSendHugePacket(t *testing.T) {
 	// client and server use the same transport write code so this
 	// test suffices for both.
@@ -536,31 +416,27 @@ func TestClientHandlesKeepalives(t *testing.T) {
 }
 
 type exitStatusMsg struct {
-	PeersId   uint32
-	Request   string
-	WantReply bool
-	Status    uint32
+	Status uint32
 }
 
 type exitSignalMsg struct {
-	PeersId    uint32
-	Request    string
-	WantReply  bool
 	Signal     string
 	CoreDumped bool
 	Errmsg     string
 	Lang       string
 }
 
-func newServerShell(ch *serverChan, prompt string) *ServerTerminal {
-	term := terminal.NewTerminal(ch, prompt)
-	return &ServerTerminal{
+func newServerShell(ch *nChannel, prompt string) *ServerTerminal {
+	compat := newCompatChannel(ch)
+	term := terminal.NewTerminal(compat, prompt)
+	s := &ServerTerminal{
 		Term:    term,
-		Channel: ch,
+		Channel: compat,
 	}
+	return s
 }
 
-func exitStatusZeroHandler(ch *serverChan, t *testing.T) {
+func exitStatusZeroHandler(ch *nChannel, t *testing.T) {
 	defer ch.Close()
 	// this string is returned to stdout
 	shell := newServerShell(ch, "> ")
@@ -568,14 +444,14 @@ func exitStatusZeroHandler(ch *serverChan, t *testing.T) {
 	sendStatus(0, ch, t)
 }
 
-func exitStatusNonZeroHandler(ch *serverChan, t *testing.T) {
+func exitStatusNonZeroHandler(ch *nChannel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
 	sendStatus(15, ch, t)
 }
 
-func exitSignalAndStatusHandler(ch *serverChan, t *testing.T) {
+func exitSignalAndStatusHandler(ch *nChannel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
@@ -583,27 +459,27 @@ func exitSignalAndStatusHandler(ch *serverChan, t *testing.T) {
 	sendSignal("TERM", ch, t)
 }
 
-func exitSignalHandler(ch *serverChan, t *testing.T) {
+func exitSignalHandler(ch *nChannel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
 	sendSignal("TERM", ch, t)
 }
 
-func exitSignalUnknownHandler(ch *serverChan, t *testing.T) {
+func exitSignalUnknownHandler(ch *nChannel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
 	sendSignal("SYS", ch, t)
 }
 
-func exitWithoutSignalOrStatus(ch *serverChan, t *testing.T) {
+func exitWithoutSignalOrStatus(ch *nChannel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
 }
 
-func shellHandler(ch *serverChan, t *testing.T) {
+func shellHandler(ch *nChannel, t *testing.T) {
 	defer ch.Close()
 	// this string is returned to stdout
 	shell := newServerShell(ch, "golang")
@@ -613,22 +489,25 @@ func shellHandler(ch *serverChan, t *testing.T) {
 
 // Ignores the command, writes fixed strings to stderr and stdout.
 // Strings are "this-is-stdout." and "this-is-stderr.".
-func fixedOutputHandler(ch *serverChan, t *testing.T) {
+func fixedOutputHandler(ch *nChannel, t *testing.T) {
 	defer ch.Close()
-
-	_, err := ch.Read(make([]byte, 0))
-	if _, ok := err.(ChannelRequest); !ok {
+	_, err := ch.pending.read(nil, true)
+	req, ok := err.(ChannelRequest)
+	if !ok {
 		t.Fatalf("error: expected channel request, got: %#v", err)
 		return
 	}
+
 	// ignore request, always send some text
-	ch.AckRequest(true)
+	if req.WantReply {
+		ch.AckRequest(true)
+	}
 
 	_, err = io.WriteString(ch, "this-is-stdout.")
 	if err != nil {
 		t.Fatalf("error writing on server: %v", err)
 	}
-	_, err = io.WriteString(ch.Stderr(), "this-is-stderr.")
+	_, err = io.WriteString(ch.Extended(1), "this-is-stderr.")
 	if err != nil {
 		t.Fatalf("error writing on server: %v", err)
 	}
@@ -641,78 +520,37 @@ func readLine(shell *ServerTerminal, t *testing.T) {
 	}
 }
 
-func sendStatus(status uint32, ch *serverChan, t *testing.T) {
+func sendStatus(status uint32, ch *nChannel, t *testing.T) {
 	msg := exitStatusMsg{
-		PeersId:   ch.remoteId,
-		Request:   "exit-status",
-		WantReply: false,
-		Status:    status,
+		Status: status,
 	}
-	if err := ch.writePacket(marshal(msgChannelRequest, msg)); err != nil {
+	if _, err := ch.SendRequest("exit-status", false, marshal(0, msg)); err != nil {
 		t.Errorf("unable to send status: %v", err)
 	}
 }
 
-func sendSignal(signal string, ch *serverChan, t *testing.T) {
+func sendSignal(signal string, ch *nChannel, t *testing.T) {
 	sig := exitSignalMsg{
-		PeersId:    ch.remoteId,
-		Request:    "exit-signal",
-		WantReply:  false,
 		Signal:     signal,
 		CoreDumped: false,
 		Errmsg:     "Process terminated",
 		Lang:       "en-GB-oed",
 	}
-	if err := ch.writePacket(marshal(msgChannelRequest, sig)); err != nil {
+	if _, err := ch.SendRequest("exit-signal", false, marshal(0, sig)); err != nil {
 		t.Errorf("unable to send signal: %v", err)
 	}
 }
 
-func sendInvalidRecord(ch *serverChan, t *testing.T) {
-	defer ch.Close()
-	packet := make([]byte, 1+4+4+1)
-	packet[0] = msgChannelData
-	marshalUint32(packet[1:], 29348723 /* invalid channel id */)
-	marshalUint32(packet[5:], 1)
-	packet[9] = 42
-
-	if err := ch.writePacket(packet); err != nil {
-		t.Errorf("unable send invalid record: %v", err)
-	}
-}
-
-func sendZeroWindowAdjust(ch *serverChan, t *testing.T) {
-	defer ch.Close()
-	// send a bogus zero sized window update
-	ch.sendWindowAdj(0)
-	shell := newServerShell(ch, "> ")
-	readLine(shell, t)
-	sendStatus(0, ch, t)
-}
-
-func discardHandler(ch *serverChan, t *testing.T) {
+func discardHandler(ch *nChannel, t *testing.T) {
 	defer ch.Close()
 	// grow the window to avoid being fooled by
 	// the initial 1 << 14 window.
-	ch.sendWindowAdj(1024 * 1024)
+	ch.adjustWindow(1024 * 1024)
+
 	io.Copy(ioutil.Discard, ch)
 }
 
-func largeSendHandler(ch *serverChan, t *testing.T) {
-	defer ch.Close()
-	// grow the window to avoid being fooled by
-	// the initial 1 << 14 window.
-	ch.sendWindowAdj(1024 * 1024)
-	shell := newServerShell(ch, "> ")
-	readLine(shell, t)
-	// try to send more than the 32k window
-	// will allow
-	if err := ch.writePacket(make([]byte, 128*1024)); err == nil {
-		t.Errorf("wrote packet larger than 32k")
-	}
-}
-
-func echoHandler(ch *serverChan, t *testing.T) {
+func echoHandler(ch *nChannel, t *testing.T) {
 	defer ch.Close()
 	if n, err := copyNRandomly("echohandler", ch, ch, windowTestBytes); err != nil {
 		t.Errorf("short write, wrote %d, expected %d: %v ", n, windowTestBytes, err)
@@ -749,17 +587,59 @@ func copyNRandomly(title string, dst io.Writer, src io.Reader, n int) (int, erro
 	return written, nil
 }
 
-func channelKeepaliveSender(ch *serverChan, t *testing.T) {
+func channelKeepaliveSender(ch *nChannel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
-	msg := channelRequestMsg{
-		PeersId:   ch.remoteId,
-		Request:   "keepalive@openssh.com",
-		WantReply: true,
-	}
-	if err := ch.writePacket(marshal(msgChannelRequest, msg)); err != nil {
+	if _, err := ch.SendRequest("keepalive@openssh.com", true, nil); err != nil {
 		t.Errorf("unable to send channel keepalive request: %v", err)
 	}
 	sendStatus(0, ch, t)
+}
+
+func TestClientWriteEOF(t *testing.T) {
+	conn := dial(simpleEchoHandler, t)
+	defer conn.Close()
+
+	session, err := conn.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		t.Fatalf("StdinPipe failed: %v", err)
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe failed: %v", err)
+	}
+
+	data := []byte(`0000`)
+	_, err = stdin.Write(data)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	stdin.Close()
+
+	res, err := ioutil.ReadAll(stdout)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	if !bytes.Equal(data, res) {
+		t.Fatalf("Read differed from write, wrote: %v, read: %v", data, res)
+	}
+}
+
+func simpleEchoHandler(ch *nChannel, t *testing.T) {
+	defer ch.Close()
+	data, err := ioutil.ReadAll(ch)
+	if err != nil {
+		t.Errorf("handler read error: %v", err)
+	}
+	_, err = ch.Write(data)
+	if err != nil {
+		t.Errorf("handler write error: %v", err)
+	}
 }

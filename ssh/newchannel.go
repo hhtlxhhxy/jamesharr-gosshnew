@@ -327,7 +327,6 @@ func (ch *nChannel) Read(data []byte) (int, error) {
 	if !ch.decided {
 		return 0, errUndecided
 	}
-
 	return ch.ReadExtended(data, 0)
 }
 
@@ -432,4 +431,30 @@ func (ch *nChannel) ChannelType() string {
 
 func (ch *nChannel) ExtraData() []byte {
 	return ch.extraData
+}
+
+// compatChannel is a hack to implement legacy go.crypto/ssh Channel's
+// handing of channel requests.
+type compatChannel struct {
+	*nChannel
+}
+
+func newCompatChannel(ch *nChannel) *compatChannel {
+	c := &compatChannel{ch}
+	go c.loop()
+	return c
+}
+
+func (c *compatChannel) loop() {
+	for r := range c.nChannel.incomingRequests {
+		c.nChannel.pending.addRequest(r)
+	}
+}
+
+func (c *compatChannel) Stderr() io.Writer {
+	return c.Extended(1)
+}
+
+func (c *compatChannel) Read(buf []byte) (int, error) {
+	return c.nChannel.pending.read(buf, true)
 }

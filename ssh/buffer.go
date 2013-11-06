@@ -16,6 +16,8 @@ type buffer struct {
 	// protects concurrent access to head, tail and closed
 	*sync.Cond
 
+	incomingRequests []*ChannelRequest
+
 	head *element // the buffer that will be read first
 	tail *element // the buffer that will be read last
 
@@ -50,6 +52,15 @@ func (b *buffer) write(buf []byte) {
 	b.Cond.Signal()
 }
 
+// addRequest adds a request to be returned from read(). This is a
+// temporary hack for compatibility with go.crypto/ssh.
+func (b *buffer) addRequest(r *ChannelRequest) {
+	b.Cond.L.Lock()
+	defer b.Cond.L.Unlock()
+	b.incomingRequests = append(b.incomingRequests, r)
+	b.Cond.Broadcast()
+}
+
 // eof closes the buffer. Reads from the buffer once all
 // the data has been consumed will receive os.EOF.
 func (b *buffer) eof() error {
@@ -60,15 +71,16 @@ func (b *buffer) eof() error {
 	return nil
 }
 
-// Read reads data from the internal buffer in buf.
-// Reads will block if no data is available, or until
-// the buffer is closed.
-func (b *buffer) Read(buf []byte) (n int, err error) {
+// Read reads data from the internal buffer in buf.  Reads will block
+// if no data is available, or until the buffer is closed. If
+// requestErrors is set, return pending ChannelRequest as errors.
+func (b *buffer) read(buf []byte, requestErrors bool) (n int, err error) {
 	b.Cond.L.Lock()
 	defer b.Cond.L.Unlock()
-	for len(buf) > 0 {
+
+	for {
 		// if there is data in b.head, copy it
-		if len(b.head.buf) > 0 {
+		if len(buf) > 0 && len(b.head.buf) > 0 {
 			r := copy(buf, b.head.buf)
 			buf, b.head.buf = buf[r:], b.head.buf[r:]
 			n += r
@@ -83,14 +95,28 @@ func (b *buffer) Read(buf []byte) (n int, err error) {
 		if n > 0 {
 			break
 		}
+
+		if requestErrors && len(b.incomingRequests) > 0 {
+			err = *b.incomingRequests[0]
+			b.incomingRequests = b.incomingRequests[1:]
+			return 0, err
+		}
+
 		// if nothing was read, and there is nothing outstanding
 		// check to see if the buffer is closed.
 		if b.closed {
 			err = io.EOF
 			break
 		}
+		if !requestErrors && len(buf) == 0 {
+			break
+		}
 		// out of buffers, wait for producer
 		b.Cond.Wait()
 	}
 	return
+}
+
+func (b *buffer) Read(buf []byte) (n int, err error) {
+	return b.read(buf, false)
 }

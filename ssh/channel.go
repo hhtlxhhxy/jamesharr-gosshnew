@@ -8,54 +8,49 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 	"sync/atomic"
 )
 
-// extendedDataTypeCode identifies an OpenSSL extended data type. See RFC 4254,
-// section 5.2.
-type extendedDataTypeCode uint32
+const minPacketLength = 9
 
-const (
-	// extendedDataStderr is the extended data type that is used for stderr.
-	extendedDataStderr extendedDataTypeCode = 1
-
-	// minPacketLength defines the smallest valid packet
-	minPacketLength = 9
-)
-
-// A Channel is an ordered, reliable, duplex stream that is multiplexed over an
-// SSH connection. Channel.Read can return a ChannelRequest as an error.
+// A Channel is an ordered, reliable, duplex stream that is
+// multiplexed over an SSH connection.
 type Channel interface {
 	// Accept accepts the channel creation request.
 	Accept() error
-	// Reject rejects the channel creation request. After calling this, no
-	// other methods on the Channel may be called. If they are then the
-	// peer is likely to signal a protocol error and drop the connection.
+
+	// Reject rejects the channel creation request. After calling
+	// this, no other methods on the Channel may be called.
 	Reject(reason RejectionReason, message string) error
 
 	// Read may return a ChannelRequest as an error.
 	Read(data []byte) (int, error)
 	Write(data []byte) (int, error)
+
+	// Signals end of channel use. No data may be sent after this
+	// call.
 	Close() error
 
 	// Stderr returns an io.Writer that writes to this channel with the
 	// extended data type set to stderr.
 	Stderr() io.Writer
 
-	// AckRequest either sends an ack or nack to the channel request.
+	// AckRequest either sends an ack or nack to the channel
+	// request. It should only be called if the last
+	// ChannelRequest had a WantReply
 	AckRequest(ok bool) error
 
 	// ChannelType returns the type of the channel, as supplied by the
 	// client.
 	ChannelType() string
+
 	// ExtraData returns the arbitrary payload for this channel, as supplied
 	// by the client. This data is specific to the channel type.
 	ExtraData() []byte
 }
 
-// ChannelRequest represents a request sent on a channel, outside of the normal
-// stream of bytes. It may result from calling Read on a Channel.
+// ChannelRequest is a request sent outside of the normal stream of
+// bytes.
 type ChannelRequest struct {
 	Request   string
 	WantReply bool
@@ -148,305 +143,6 @@ func (c *channel) closed() bool {
 
 func (c *channel) setClosed() bool {
 	return atomic.CompareAndSwapUint32(&c.isClosed, 0, 1)
-}
-
-type serverChan struct {
-	channel
-	// immutable once created
-	chanType  string
-	extraData []byte
-
-	serverConn  *ServerConn
-	myWindow    uint32
-	theyClosed  bool // indicates the close msg has been received from the remote side
-	theySentEOF bool
-	isDead      uint32
-	err         error
-
-	pendingRequests []ChannelRequest
-	pendingData     []byte
-	head, length    int
-
-	// This lock is inferior to serverConn.lock
-	cond *sync.Cond
-}
-
-func (c *serverChan) Accept() error {
-	c.serverConn.lock.Lock()
-	defer c.serverConn.lock.Unlock()
-
-	if c.serverConn.err != nil {
-		return c.serverConn.err
-	}
-
-	confirm := channelOpenConfirmMsg{
-		PeersId:       c.remoteId,
-		MyId:          c.localId,
-		MyWindow:      c.myWindow,
-		MaxPacketSize: c.maxPacket,
-	}
-	return c.writePacket(marshal(msgChannelOpenConfirm, confirm))
-}
-
-func (c *serverChan) Reject(reason RejectionReason, message string) error {
-	c.serverConn.lock.Lock()
-	defer c.serverConn.lock.Unlock()
-
-	if c.serverConn.err != nil {
-		return c.serverConn.err
-	}
-
-	return c.sendChannelOpenFailure(reason, message)
-}
-
-func (c *serverChan) handlePacket(packet interface{}) {
-	c.cond.L.Lock()
-	defer c.cond.L.Unlock()
-
-	switch packet := packet.(type) {
-	case *channelRequestMsg:
-		req := ChannelRequest{
-			Request:   packet.Request,
-			WantReply: packet.WantReply,
-			Payload:   packet.RequestSpecificData,
-		}
-
-		c.pendingRequests = append(c.pendingRequests, req)
-		c.cond.Signal()
-	case *channelCloseMsg:
-		c.theyClosed = true
-		c.cond.Signal()
-	case *channelEOFMsg:
-		c.theySentEOF = true
-		c.cond.Signal()
-	case *windowAdjustMsg:
-		if !c.remoteWin.add(packet.AdditionalBytes) {
-			panic("illegal window update")
-		}
-	default:
-		panic("unknown packet type")
-	}
-}
-
-func (c *serverChan) handleData(data []byte) {
-	c.cond.L.Lock()
-	defer c.cond.L.Unlock()
-
-	// The other side should never send us more than our window.
-	if len(data)+c.length > len(c.pendingData) {
-		// TODO(agl): we should tear down the channel with a protocol
-		// error.
-		return
-	}
-
-	c.myWindow -= uint32(len(data))
-	for i := 0; i < 2; i++ {
-		tail := c.head + c.length
-		if tail >= len(c.pendingData) {
-			tail -= len(c.pendingData)
-		}
-		n := copy(c.pendingData[tail:], data)
-		data = data[n:]
-		c.length += n
-	}
-
-	c.cond.Signal()
-}
-
-func (c *serverChan) Stderr() io.Writer {
-	return extendedDataChannel{c: c, t: extendedDataStderr}
-}
-
-// extendedDataChannel is an io.Writer that writes any data to c as extended
-// data of the given type.
-type extendedDataChannel struct {
-	t extendedDataTypeCode
-	c *serverChan
-}
-
-func (edc extendedDataChannel) Write(data []byte) (n int, err error) {
-	const headerLength = 13 // 1 byte message type, 4 bytes remoteId, 4 bytes extended message type, 4 bytes data length
-	c := edc.c
-	for len(data) > 0 {
-		space := min(c.maxPacket-headerLength, len(data))
-		if space, err = c.getWindowSpace(space); err != nil {
-			return 0, err
-		}
-		todo := data
-		if uint32(len(todo)) > space {
-			todo = todo[:space]
-		}
-
-		packet := make([]byte, headerLength+len(todo))
-		packet[0] = msgChannelExtendedData
-		marshalUint32(packet[1:], c.remoteId)
-		marshalUint32(packet[5:], uint32(edc.t))
-		marshalUint32(packet[9:], uint32(len(todo)))
-		copy(packet[13:], todo)
-
-		if err = c.writePacket(packet); err != nil {
-			return
-		}
-
-		n += len(todo)
-		data = data[len(todo):]
-	}
-
-	return
-}
-
-func (c *serverChan) Read(data []byte) (n int, err error) {
-	n, err, windowAdjustment := c.read(data)
-
-	if windowAdjustment > 0 {
-		packet := marshal(msgChannelWindowAdjust, windowAdjustMsg{
-			PeersId:         c.remoteId,
-			AdditionalBytes: windowAdjustment,
-		})
-		err = c.writePacket(packet)
-	}
-
-	return
-}
-
-func (c *serverChan) read(data []byte) (n int, err error, windowAdjustment uint32) {
-	c.cond.L.Lock()
-	defer c.cond.L.Unlock()
-
-	if c.err != nil {
-		return 0, c.err, 0
-	}
-
-	for {
-		if c.theySentEOF || c.theyClosed || c.dead() {
-			return 0, io.EOF, 0
-		}
-
-		if len(c.pendingRequests) > 0 {
-			req := c.pendingRequests[0]
-			if len(c.pendingRequests) == 1 {
-				c.pendingRequests = nil
-			} else {
-				oldPendingRequests := c.pendingRequests
-				c.pendingRequests = make([]ChannelRequest, len(oldPendingRequests)-1)
-				copy(c.pendingRequests, oldPendingRequests[1:])
-			}
-
-			return 0, req, 0
-		}
-
-		if c.length > 0 {
-			tail := min(uint32(c.head+c.length), len(c.pendingData))
-			n = copy(data, c.pendingData[c.head:tail])
-			c.head += n
-			c.length -= n
-			if c.head == len(c.pendingData) {
-				c.head = 0
-			}
-
-			windowAdjustment = uint32(len(c.pendingData)-c.length) - c.myWindow
-			if windowAdjustment < uint32(len(c.pendingData)/2) {
-				windowAdjustment = 0
-			}
-			c.myWindow += windowAdjustment
-
-			return
-		}
-
-		c.cond.Wait()
-	}
-
-	panic("unreachable")
-}
-
-// getWindowSpace takes, at most, max bytes of space from the peer's window. It
-// returns the number of bytes actually reserved.
-func (c *serverChan) getWindowSpace(max uint32) (uint32, error) {
-	if c.dead() || c.closed() {
-		return 0, io.EOF
-	}
-	return c.remoteWin.reserve(max), nil
-}
-
-func (c *serverChan) dead() bool {
-	return atomic.LoadUint32(&c.isDead) > 0
-}
-
-func (c *serverChan) setDead() {
-	atomic.StoreUint32(&c.isDead, 1)
-}
-
-func (c *serverChan) Write(data []byte) (n int, err error) {
-	const headerLength = 9 // 1 byte message type, 4 bytes remoteId, 4 bytes data length
-	for len(data) > 0 {
-		space := min(c.maxPacket-headerLength, len(data))
-		if space, err = c.getWindowSpace(space); err != nil {
-			return 0, err
-		}
-		todo := data
-		if uint32(len(todo)) > space {
-			todo = todo[:space]
-		}
-
-		packet := make([]byte, headerLength+len(todo))
-		packet[0] = msgChannelData
-		marshalUint32(packet[1:], c.remoteId)
-		marshalUint32(packet[5:], uint32(len(todo)))
-		copy(packet[9:], todo)
-
-		if err = c.writePacket(packet); err != nil {
-			return
-		}
-
-		n += len(todo)
-		data = data[len(todo):]
-	}
-
-	return
-}
-
-// Close signals the intent to close the channel.
-func (c *serverChan) Close() error {
-	c.serverConn.lock.Lock()
-	defer c.serverConn.lock.Unlock()
-
-	if c.serverConn.err != nil {
-		return c.serverConn.err
-	}
-
-	if !c.setClosed() {
-		return errors.New("ssh: channel already closed")
-	}
-	return c.sendClose()
-}
-
-func (c *serverChan) AckRequest(ok bool) error {
-	c.serverConn.lock.Lock()
-	defer c.serverConn.lock.Unlock()
-
-	if c.serverConn.err != nil {
-		return c.serverConn.err
-	}
-
-	if !ok {
-		ack := channelRequestFailureMsg{
-			PeersId: c.remoteId,
-		}
-		return c.writePacket(marshal(msgChannelFailure, ack))
-	}
-
-	ack := channelRequestSuccessMsg{
-		PeersId: c.remoteId,
-	}
-	return c.writePacket(marshal(msgChannelSuccess, ack))
-}
-
-func (c *serverChan) ChannelType() string {
-	return c.chanType
-}
-
-func (c *serverChan) ExtraData() []byte {
-	return c.extraData
 }
 
 // A clientChan represents a single RFC 4254 channel multiplexed

@@ -7,11 +7,9 @@ package ssh
 import (
 	"bytes"
 	"crypto/rand"
-	"encoding/binary"
 	"errors"
 	"io"
 	"net"
-	"sync"
 
 	_ "crypto/sha1"
 )
@@ -100,13 +98,6 @@ type ServerConn struct {
 	config    *ServerConfig
 	sshConn
 
-	channels   map[uint32]*serverChan
-	nextChanId uint32
-
-	// lock protects err and channels.
-	lock sync.Mutex
-	err  error
-
 	// cachedPubKeys contains the cache results of tests for public keys.
 	// Since SSH clients will query whether a public key is acceptable
 	// before attempting to authenticate with it, we end up with duplicate
@@ -124,15 +115,17 @@ type ServerConn struct {
 
 	// Our version.
 	serverVersion []byte
+
+	// The connection protocol.
+	mux *mux
 }
 
 // Server returns a new SSH server connection
 // using c as the underlying transport.
 func Server(c net.Conn, config *ServerConfig) *ServerConn {
 	return &ServerConn{
-		sshConn:  sshConn{c, c},
-		channels: make(map[uint32]*serverChan),
-		config:   config,
+		sshConn: sshConn{c, c},
+		config:  config,
 	}
 }
 
@@ -191,6 +184,10 @@ func (s *ServerConn) Handshake() error {
 	if err := s.authenticate(); err != nil {
 		return err
 	}
+	s.mux = newMux(s.transport)
+	go s.handleGlobalRequests()
+	go s.mux.Loop()
+
 	return err
 }
 
@@ -201,6 +198,14 @@ func isAcceptableAlgo(algo string) bool {
 		return true
 	}
 	return false
+}
+
+func (s *ServerConn) handleGlobalRequests() {
+	for r := range s.mux.incomingRequests {
+		if r.WantReply {
+			s.mux.AckRequest(false, nil)
+		}
+	}
 }
 
 // testPubKey returns true if the given public key is acceptable for the user.
@@ -437,136 +442,11 @@ const defaultWindowSize = 32768
 // Accept reads and processes messages on a ServerConn. It must be called
 // in order to demultiplex messages to any resulting Channels.
 func (s *ServerConn) Accept() (Channel, error) {
-	// TODO(dfc) s.lock is not held here so visibility of s.err is not guaranteed.
-	if s.err != nil {
-		return nil, s.err
+	in, ok := <-s.mux.incomingChannels
+	if !ok {
+		return nil, io.EOF
 	}
-
-	for {
-		packet, err := s.transport.readPacket()
-		if err != nil {
-			s.lock.Lock()
-			s.err = err
-			s.lock.Unlock()
-
-			// TODO(dfc) s.lock protects s.channels but isn't being held here.
-			for _, c := range s.channels {
-				c.setDead()
-				c.handleData(nil)
-			}
-
-			return nil, err
-		}
-
-		switch packet[0] {
-		case msgNewKeys:
-			// Lower level changed keys. Do nothing.
-
-		case msgChannelData:
-			if len(packet) < 9 {
-				// malformed data packet
-				return nil, ParseError{msgChannelData}
-			}
-			remoteId := binary.BigEndian.Uint32(packet[1:5])
-			s.lock.Lock()
-			c, ok := s.channels[remoteId]
-			if !ok {
-				s.lock.Unlock()
-				continue
-			}
-			if length := binary.BigEndian.Uint32(packet[5:9]); length > 0 {
-				packet = packet[9:]
-				c.handleData(packet[:length])
-			}
-			s.lock.Unlock()
-		default:
-			decoded, err := decode(packet)
-			if err != nil {
-				return nil, err
-			}
-			switch msg := decoded.(type) {
-			case *channelOpenMsg:
-				if msg.MaxPacketSize < minPacketLength || msg.MaxPacketSize > 1<<31 {
-					return nil, errors.New("ssh: invalid MaxPacketSize from peer")
-				}
-				c := &serverChan{
-					channel: channel{
-						packetConn: s.transport,
-						remoteId:   msg.PeersId,
-						remoteWin:  window{Cond: newCond()},
-						maxPacket:  msg.MaxPacketSize,
-					},
-					chanType:    msg.ChanType,
-					extraData:   msg.TypeSpecificData,
-					myWindow:    defaultWindowSize,
-					serverConn:  s,
-					cond:        newCond(),
-					pendingData: make([]byte, defaultWindowSize),
-				}
-				c.remoteWin.add(msg.PeersWindow)
-				s.lock.Lock()
-				c.localId = s.nextChanId
-				s.nextChanId++
-				s.channels[c.localId] = c
-				s.lock.Unlock()
-				return c, nil
-
-			case *channelRequestMsg:
-				s.lock.Lock()
-				c, ok := s.channels[msg.PeersId]
-				if !ok {
-					s.lock.Unlock()
-					continue
-				}
-				c.handlePacket(msg)
-				s.lock.Unlock()
-
-			case *windowAdjustMsg:
-				s.lock.Lock()
-				c, ok := s.channels[msg.PeersId]
-				if !ok {
-					s.lock.Unlock()
-					continue
-				}
-				c.handlePacket(msg)
-				s.lock.Unlock()
-
-			case *channelEOFMsg:
-				s.lock.Lock()
-				c, ok := s.channels[msg.PeersId]
-				if !ok {
-					s.lock.Unlock()
-					continue
-				}
-				c.handlePacket(msg)
-				s.lock.Unlock()
-
-			case *channelCloseMsg:
-				s.lock.Lock()
-				c, ok := s.channels[msg.PeersId]
-				if !ok {
-					s.lock.Unlock()
-					continue
-				}
-				c.handlePacket(msg)
-				s.lock.Unlock()
-
-			case *globalRequestMsg:
-				if msg.WantReply {
-					if err := s.transport.writePacket([]byte{msgRequestFailure}); err != nil {
-						return nil, err
-					}
-				}
-
-			case *disconnectMsg:
-				return nil, io.EOF
-			default:
-				// Unknown message. Ignore.
-			}
-		}
-	}
-
-	panic("unreachable")
+	return newCompatChannel(in), nil
 }
 
 // A Listener implements a network listener (net.Listener) for SSH connections.
