@@ -364,30 +364,6 @@ func TestClientZeroWindowAdjust(t *testing.T) {
 	}
 }
 
-// In the wild some clients (and servers) send zero sized window updates.
-// Test that the server can continue after receiving a zero size update.
-func TestServerZeroWindowAdjust(t *testing.T) {
-	conn := dial(exitStatusZeroHandler, t)
-	defer conn.Close()
-	session, err := conn.NewSession()
-	if err != nil {
-		t.Fatalf("Unable to request new session: %v", err)
-	}
-	defer session.Close()
-
-	if err := session.Shell(); err != nil {
-		t.Fatalf("Unable to execute command: %v", err)
-	}
-
-	// send a bogus zero sized window update
-	session.clientChan.sendWindowAdj(0)
-
-	err = session.Wait()
-	if err != nil {
-		t.Fatalf("expected nil but got %v", err)
-	}
-}
-
 // Verify that the client never sends a packet larger than maxpacket.
 func TestClientStdinRespectsMaxPacketSize(t *testing.T) {
 	conn := dial(discardHandler, t)
@@ -470,7 +446,7 @@ func TestClientCannotSendAfterClose(t *testing.T) {
 		t.Fatalf("Unable to execute command: %v", err)
 	}
 	// close underlying channel
-	if err := session.channel.Close(); err != nil {
+	if err := session.ch.Close(); err != nil {
 		t.Fatalf("Unable to close session: %v", err)
 	}
 	if _, err := in.Write([]byte("foo")); err == nil {

@@ -119,7 +119,7 @@ func TestBareMarshalUnmarshal(t *testing.T) {
 	}
 
 	s := S{42, "hello", true}
-	packet := marshal(0, s)
+	packet := marshalBare(s)
 	roundtrip := S{}
 	unmarshal(&roundtrip, packet, 0)
 
@@ -133,7 +133,7 @@ func TestBareMarshal(t *testing.T) {
 		I uint32
 	}
 	s := S2{42}
-	packet := marshal(0, s)
+	packet := marshalBare(s)
 	i, rest, ok := parseUint32(packet)
 	if len(rest) > 0 || !ok {
 		t.Errorf("parseInt(%q): parse error", packet)

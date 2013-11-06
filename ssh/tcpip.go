@@ -77,10 +77,8 @@ func (c *ClientConn) autoPortListenWorkaround(laddr *net.TCPAddr) (net.Listener,
 
 // RFC 4254 7.1
 type channelForwardMsg struct {
-	Message   string
-	WantReply bool
-	raddr     string
-	rport     uint32
+	addr  string
+	rport uint32
 }
 
 // ListenTCP requests the remote peer open a listening socket
@@ -92,21 +90,22 @@ func (c *ClientConn) ListenTCP(laddr *net.TCPAddr) (net.Listener, error) {
 	}
 
 	m := channelForwardMsg{
-		"tcpip-forward",
-		true, // sendGlobalRequest waits for a reply
 		laddr.IP.String(),
 		uint32(laddr.Port),
 	}
 	// send message
-	resp, err := c.sendGlobalRequest(m)
+	ok, resp, err := c.mux.SendRequest("tcpip-forward", true, marshalBare(m))
 	if err != nil {
 		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("tcpip-forward denied")
 	}
 
 	// If the original port was 0, then the remote side will
 	// supply a real port number in the response.
 	if laddr.Port == 0 {
-		port, _, ok := parseUint32(resp.Data)
+		port, _, ok := parseUint32(resp)
 		if !ok {
 			return nil, errors.New("unable to parse response")
 		}
@@ -137,7 +136,7 @@ type forwardEntry struct {
 // arguments to add/remove/lookup should be address as specified in
 // the original forward-request.
 type forward struct {
-	c     *clientChan  // the ssh client channel underlying this forward
+	c     *nChannel    // the ssh client channel underlying this forward
 	raddr *net.TCPAddr // the raddr of the incoming connection
 }
 
@@ -201,29 +200,26 @@ func (l *tcpListener) Accept() (net.Conn, error) {
 		return nil, io.EOF
 	}
 	return &tcpChanConn{
-		tcpChan: &tcpChan{
-			clientChan: s.c,
-			Reader:     s.c.stdout,
-			Writer:     s.c.stdin,
-		},
-		laddr: l.laddr,
-		raddr: s.raddr,
+		nChannel: s.c,
+		laddr:    l.laddr,
+		raddr:    s.raddr,
 	}, nil
 }
 
 // Close closes the listener.
 func (l *tcpListener) Close() error {
 	m := channelForwardMsg{
-		"cancel-tcpip-forward",
-		true,
 		l.laddr.IP.String(),
 		uint32(l.laddr.Port),
 	}
+
+	// this also closes the listener.
 	l.conn.forwardList.remove(*l.laddr)
-	if _, err := l.conn.sendGlobalRequest(m); err != nil {
-		return err
+	ok, _, err := l.conn.mux.SendRequest("cancel-tcpip-forward", true, marshalBare(m))
+	if err == nil && !ok {
+		err = errors.New("ssh: cancel-tcpip-forward failed")
 	}
-	return nil
+	return err
 }
 
 // Addr returns the listener's network address.
@@ -253,9 +249,9 @@ func (c *ClientConn) Dial(n, addr string) (net.Conn, error) {
 		return nil, err
 	}
 	return &tcpChanConn{
-		tcpChan: ch,
-		laddr:   zeroAddr,
-		raddr:   zeroAddr,
+		nChannel: ch,
+		laddr:    zeroAddr,
+		raddr:    zeroAddr,
 	}, nil
 }
 
@@ -274,63 +270,38 @@ func (c *ClientConn) DialTCP(n string, laddr, raddr *net.TCPAddr) (net.Conn, err
 		return nil, err
 	}
 	return &tcpChanConn{
-		tcpChan: ch,
-		laddr:   laddr,
-		raddr:   raddr,
+		nChannel: ch,
+		laddr:    laddr,
+		raddr:    raddr,
 	}, nil
 }
 
 // RFC 4254 7.2
 type channelOpenDirectMsg struct {
-	ChanType      string
-	PeersId       uint32
-	PeersWindow   uint32
-	MaxPacketSize uint32
-	raddr         string
-	rport         uint32
-	laddr         string
-	lport         uint32
+	raddr string
+	rport uint32
+	laddr string
+	lport uint32
 }
 
-// dial opens a direct-tcpip connection to the remote server. laddr and raddr are passed as
-// strings and are expected to be resolvable at the remote end.
-func (c *ClientConn) dial(laddr string, lport int, raddr string, rport int) (*tcpChan, error) {
-	ch := newClientChan(c.transport)
-	ch.localId = c.chanList.add(ch)
-	if err := c.transport.writePacket(marshal(msgChannelOpen, channelOpenDirectMsg{
-		ChanType:      "direct-tcpip",
-		PeersId:       ch.localId,
-		PeersWindow:   1 << 14,
-		MaxPacketSize: 1 << 15, // RFC 4253 6.1
-		raddr:         raddr,
-		rport:         uint32(rport),
-		laddr:         laddr,
-		lport:         uint32(lport),
-	})); err != nil {
-		c.chanList.remove(ch.localId)
-		return nil, err
+func (c *ClientConn) dial(laddr string, lport int, raddr string, rport int) (*nChannel, error) {
+	msg := channelOpenDirectMsg{
+		raddr: raddr,
+		rport: uint32(rport),
+		laddr: laddr,
+		lport: uint32(lport),
 	}
-	if err := ch.waitForChannelOpenResponse(); err != nil {
-		c.chanList.remove(ch.localId)
-		return nil, fmt.Errorf("ssh: unable to open direct tcpip connection: %v", err)
-	}
-	return &tcpChan{
-		clientChan: ch,
-		Reader:     ch.stdout,
-		Writer:     ch.stdin,
-	}, nil
+	return c.mux.OpenChannel("direct-tcpip", marshalBare(msg))
 }
 
 type tcpChan struct {
-	*clientChan // the backing channel
-	io.Reader
-	io.Writer
+	*nChannel // the backing channel
 }
 
 // tcpChanConn fulfills the net.Conn interface without
 // the tcpChan having to hold laddr or raddr directly.
 type tcpChanConn struct {
-	*tcpChan
+	*nChannel
 	laddr, raddr net.Addr
 }
 

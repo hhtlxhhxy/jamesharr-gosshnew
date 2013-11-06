@@ -15,7 +15,7 @@ import (
 )
 
 // If set, debug will log print messages sent and received.
-const debug = false
+const debug = true
 
 // nChanList is identifcal to chanList except for the channel type. It
 // will be renamed once we make the existing code use nChannel +
@@ -221,6 +221,9 @@ func (m *mux) onePacket() error {
 	}
 
 	switch packet[0] {
+	case msgNewKeys:
+		// Ignore notification of key change.
+		return nil
 	case msgDisconnect:
 		return m.handleDisconnect(packet)
 	case msgChannelOpen:

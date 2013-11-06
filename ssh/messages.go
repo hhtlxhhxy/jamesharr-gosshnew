@@ -323,6 +323,10 @@ func unmarshal(out interface{}, packet []byte, expectedType uint8) error {
 	return nil
 }
 
+func marshalBare(msg interface{}) []byte {
+	return marshal(0, msg)
+}
+
 // marshal serializes the message in msg. The given message type is
 // prepended if it is non-zero.
 func marshal(msgType uint8, msg interface{}) []byte {
