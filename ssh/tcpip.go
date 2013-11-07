@@ -136,7 +136,7 @@ type forwardEntry struct {
 // arguments to add/remove/lookup should be address as specified in
 // the original forward-request.
 type forward struct {
-	c     *nChannel    // the ssh client channel underlying this forward
+	c     *channel     // the ssh client channel underlying this forward
 	raddr *net.TCPAddr // the raddr of the incoming connection
 }
 
@@ -200,9 +200,9 @@ func (l *tcpListener) Accept() (net.Conn, error) {
 		return nil, io.EOF
 	}
 	return &tcpChanConn{
-		nChannel: s.c,
-		laddr:    l.laddr,
-		raddr:    s.raddr,
+		channel: s.c,
+		laddr:   l.laddr,
+		raddr:   s.raddr,
 	}, nil
 }
 
@@ -249,9 +249,9 @@ func (c *ClientConn) Dial(n, addr string) (net.Conn, error) {
 		return nil, err
 	}
 	return &tcpChanConn{
-		nChannel: ch,
-		laddr:    zeroAddr,
-		raddr:    zeroAddr,
+		channel: ch,
+		laddr:   zeroAddr,
+		raddr:   zeroAddr,
 	}, nil
 }
 
@@ -270,9 +270,9 @@ func (c *ClientConn) DialTCP(n string, laddr, raddr *net.TCPAddr) (net.Conn, err
 		return nil, err
 	}
 	return &tcpChanConn{
-		nChannel: ch,
-		laddr:    laddr,
-		raddr:    raddr,
+		channel: ch,
+		laddr:   laddr,
+		raddr:   raddr,
 	}, nil
 }
 
@@ -284,7 +284,7 @@ type channelOpenDirectMsg struct {
 	lport uint32
 }
 
-func (c *ClientConn) dial(laddr string, lport int, raddr string, rport int) (*nChannel, error) {
+func (c *ClientConn) dial(laddr string, lport int, raddr string, rport int) (*channel, error) {
 	msg := channelOpenDirectMsg{
 		raddr: raddr,
 		rport: uint32(rport),
@@ -295,13 +295,13 @@ func (c *ClientConn) dial(laddr string, lport int, raddr string, rport int) (*nC
 }
 
 type tcpChan struct {
-	*nChannel // the backing channel
+	*channel // the backing channel
 }
 
 // tcpChanConn fulfills the net.Conn interface without
 // the tcpChan having to hold laddr or raddr directly.
 type tcpChanConn struct {
-	*nChannel
+	*channel
 	laddr, raddr net.Addr
 }
 

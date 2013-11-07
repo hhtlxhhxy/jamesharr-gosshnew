@@ -16,7 +16,7 @@ import (
 // channel is a new implementation of the Channel interface that works
 // with the mux class. We'll rename it when we make the existing code
 // use it.
-type nChannel struct {
+type channel struct {
 	// R/O after creation
 	chanType          string
 	extraData         []byte
@@ -48,15 +48,15 @@ type nChannel struct {
 	sentClose bool
 }
 
-func (c *nChannel) getWindowSpace(max uint32) (uint32, error) {
-	// check if closed?
+func (c *channel) getWindowSpace(max uint32) (uint32, error) {
+	// TODO(hanwen): check if closed?
 	return c.remoteWin.reserve(max), nil
 }
 
 // writePacket sends the packet over the wire. If the packet is a
 // channel close, it updates sentClose. This method takes the lock
 // c.mu.
-func (c *nChannel) writePacket(packet []byte) error {
+func (c *channel) writePacket(packet []byte) error {
 	if uint32(len(packet)) > c.maxPacket {
 		return fmt.Errorf("ssh: cannot write %d bytes, maxPacket is %d bytes", len(packet), c.maxPacket)
 	}
@@ -72,9 +72,9 @@ func (c *nChannel) writePacket(packet []byte) error {
 	return err
 }
 
-func (c *nChannel) sendMessage(code byte, msg interface{}) error {
+func (c *channel) sendMessage(code byte, msg interface{}) error {
 	if debug {
-		log.Printf("send %d: %#v", c.mux.nChanList.offset, msg)
+		log.Printf("send %d: %#v", c.mux.chanList.offset, msg)
 	}
 
 	p := marshal(code, msg)
@@ -82,7 +82,7 @@ func (c *nChannel) sendMessage(code byte, msg interface{}) error {
 	return c.writePacket(p)
 }
 
-func (c *nChannel) WriteExtended(data []byte, extendedCode uint32) (n int, err error) {
+func (c *channel) WriteExtended(data []byte, extendedCode uint32) (n int, err error) {
 	if c.sentEOF {
 		return 0, io.EOF
 	}
@@ -123,7 +123,7 @@ func (c *nChannel) WriteExtended(data []byte, extendedCode uint32) (n int, err e
 	return n, err
 }
 
-func (c *nChannel) handleData(packet []byte) error {
+func (c *channel) handleData(packet []byte) error {
 	sz := 9
 	if packet[0] == msgChannelExtendedData {
 		sz = 13
@@ -166,7 +166,7 @@ func (c *nChannel) handleData(packet []byte) error {
 	return nil
 }
 
-func (c *nChannel) adjustWindow(n uint32) error {
+func (c *channel) adjustWindow(n uint32) error {
 	c.mu.Lock()
 	c.myWindow += uint32(n)
 	c.mu.Unlock()
@@ -175,7 +175,7 @@ func (c *nChannel) adjustWindow(n uint32) error {
 	})
 }
 
-func (c *nChannel) ReadExtended(data []byte, extended uint32) (n int, err error) {
+func (c *channel) ReadExtended(data []byte, extended uint32) (n int, err error) {
 	if extended == 1 {
 		n, err = c.extPending.Read(data)
 	} else if extended == 0 {
@@ -198,7 +198,7 @@ func (c *nChannel) ReadExtended(data []byte, extended uint32) (n int, err error)
 	return n, err
 }
 
-func (c *nChannel) handlePacket(packet []byte) error {
+func (c *channel) handlePacket(packet []byte) error {
 	if uint32(len(packet)) > c.maxPacket {
 		// TODO(hanwen): should send Disconnect?
 		return errors.New("ssh: incoming packet exceeds maximum size")
@@ -216,7 +216,7 @@ func (c *nChannel) handlePacket(packet []byte) error {
 		c.extPending.eof()
 		close(c.msg)
 		close(c.incomingRequests)
-		c.mux.nChanList.remove(c.localId)
+		c.mux.chanList.remove(c.localId)
 
 		return nil
 	case msgChannelEOF:
@@ -256,8 +256,8 @@ func (c *nChannel) handlePacket(packet []byte) error {
 	return nil
 }
 
-func (m *mux) newChannel(chanType string, extraData []byte) *nChannel {
-	ch := &nChannel{
+func (m *mux) newChannel(chanType string, extraData []byte) *channel {
+	ch := &channel{
 		remoteWin:        window{Cond: newCond()},
 		myWindow:         defaultWindowSize,
 		pending:          newBuffer(),
@@ -269,7 +269,7 @@ func (m *mux) newChannel(chanType string, extraData []byte) *nChannel {
 		mux:              m,
 	}
 
-	ch.localId = m.nChanList.add(ch)
+	ch.localId = m.chanList.add(ch)
 	ch.myWindow = defaultWindowSize
 
 	return ch
@@ -280,7 +280,7 @@ var errDecidedAlready = errors.New("ssh: can call Accept or Reject only once")
 
 type extChannel struct {
 	code uint32
-	ch   *nChannel
+	ch   *channel
 }
 
 func (e *extChannel) Write(data []byte) (n int, err error) {
@@ -291,7 +291,7 @@ func (e *extChannel) Read(data []byte) (n int, err error) {
 	return e.ch.ReadExtended(data, e.code)
 }
 
-func (c *nChannel) Accept() error {
+func (c *channel) Accept() error {
 	if c.decided {
 		return errDecidedAlready
 	}
@@ -309,7 +309,7 @@ func (c *nChannel) Accept() error {
 	return nil
 }
 
-func (ch *nChannel) Reject(reason RejectionReason, message string) error {
+func (ch *channel) Reject(reason RejectionReason, message string) error {
 	if ch.decided {
 		return errDecidedAlready
 	}
@@ -323,21 +323,21 @@ func (ch *nChannel) Reject(reason RejectionReason, message string) error {
 	return ch.sendMessage(msgChannelOpenFailure, reject)
 }
 
-func (ch *nChannel) Read(data []byte) (int, error) {
+func (ch *channel) Read(data []byte) (int, error) {
 	if !ch.decided {
 		return 0, errUndecided
 	}
 	return ch.ReadExtended(data, 0)
 }
 
-func (ch *nChannel) Write(data []byte) (int, error) {
+func (ch *channel) Write(data []byte) (int, error) {
 	if !ch.decided {
 		return 0, errUndecided
 	}
 	return ch.WriteExtended(data, 0)
 }
 
-func (ch *nChannel) CloseWrite() error {
+func (ch *channel) CloseWrite() error {
 	if !ch.decided {
 		return errUndecided
 	}
@@ -346,7 +346,7 @@ func (ch *nChannel) CloseWrite() error {
 		PeersId: ch.remoteId})
 }
 
-func (ch *nChannel) Close() error {
+func (ch *channel) Close() error {
 	if !ch.decided {
 		return errUndecided
 	}
@@ -355,7 +355,7 @@ func (ch *nChannel) Close() error {
 		PeersId: ch.remoteId})
 }
 
-func (ch *nChannel) Extended(code uint32) io.ReadWriter {
+func (ch *channel) Extended(code uint32) io.ReadWriter {
 	if !ch.decided {
 		return nil
 	}
@@ -364,7 +364,7 @@ func (ch *nChannel) Extended(code uint32) io.ReadWriter {
 
 // SendRequest sends a channel request. If wantReply is set, it will
 // wait for a reply and return the result as a boolean.
-func (ch *nChannel) SendRequest(name string, wantReply bool, payload []byte) (bool, error) {
+func (ch *channel) SendRequest(name string, wantReply bool, payload []byte) (bool, error) {
 	if !ch.decided {
 		return false, errUndecided
 	}
@@ -404,7 +404,7 @@ func (ch *nChannel) SendRequest(name string, wantReply bool, payload []byte) (bo
 }
 
 // AckRequest either sends an ack or nack to the channel request.
-func (ch *nChannel) AckRequest(ok bool) error {
+func (ch *channel) AckRequest(ok bool) error {
 	if !ch.decided {
 		return errUndecided
 	}
@@ -425,29 +425,29 @@ func (ch *nChannel) AckRequest(ok bool) error {
 	return ch.sendMessage(code, msg)
 }
 
-func (ch *nChannel) ChannelType() string {
+func (ch *channel) ChannelType() string {
 	return ch.chanType
 }
 
-func (ch *nChannel) ExtraData() []byte {
+func (ch *channel) ExtraData() []byte {
 	return ch.extraData
 }
 
 // compatChannel is a hack to implement legacy go.crypto/ssh Channel's
 // handing of channel requests.
 type compatChannel struct {
-	*nChannel
+	*channel
 }
 
-func newCompatChannel(ch *nChannel) *compatChannel {
+func newCompatChannel(ch *channel) *compatChannel {
 	c := &compatChannel{ch}
 	go c.loop()
 	return c
 }
 
 func (c *compatChannel) loop() {
-	for r := range c.nChannel.incomingRequests {
-		c.nChannel.pending.addRequest(r)
+	for r := range c.channel.incomingRequests {
+		c.channel.pending.addRequest(r)
 	}
 }
 
@@ -456,5 +456,5 @@ func (c *compatChannel) Stderr() io.Writer {
 }
 
 func (c *compatChannel) Read(buf []byte) (int, error) {
-	return c.nChannel.pending.read(buf, true)
+	return c.channel.pending.read(buf, true)
 }

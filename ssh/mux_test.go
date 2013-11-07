@@ -26,10 +26,10 @@ func muxPair() (*mux, *mux) {
 
 // Returns both ends of a channel, and the mux for the the 2nd
 // channel.
-func channelPair(t *testing.T) (*nChannel, *nChannel, *mux) {
+func channelPair(t *testing.T) (*channel, *channel, *mux) {
 	c, s := muxPair()
 
-	res := make(chan *nChannel, 1)
+	res := make(chan *channel, 1)
 	go func() {
 		ch, ok := <-s.incomingChannels
 		if !ok {

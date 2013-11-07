@@ -129,7 +129,7 @@ type Session struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
-	ch *nChannel // the channel backing this session
+	ch *channel // the channel backing this session
 
 	started   bool // true once Start, Run or Shell is invoked.
 	copyFuncs []func() error
@@ -477,7 +477,7 @@ func (s *Session) stderr() {
 // sessionStdin reroutes Close to CloseWrite.
 type sessionStdin struct {
 	io.Writer
-	ch *nChannel
+	ch *channel
 }
 
 func (s *sessionStdin) Close() error {

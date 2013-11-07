@@ -18,7 +18,7 @@ import (
 	"code.google.com/p/go.crypto/ssh/terminal"
 )
 
-type serverType func(*nChannel, *testing.T)
+type serverType func(*channel, *testing.T)
 
 // dial constructs a new test server and returns a *ClientConn.
 func dial(handler serverType, t *testing.T) *ClientConn {
@@ -62,7 +62,7 @@ func dial(handler serverType, t *testing.T) *ClientConn {
 			}
 			go func() {
 				defer close(done)
-				handler(ch.(*compatChannel).nChannel, t)
+				handler(ch.(*compatChannel).channel, t)
 			}()
 		}
 		<-done
@@ -415,7 +415,7 @@ type exitSignalMsg struct {
 	Lang       string
 }
 
-func newServerShell(ch *nChannel, prompt string) *ServerTerminal {
+func newServerShell(ch *channel, prompt string) *ServerTerminal {
 	compat := newCompatChannel(ch)
 	term := terminal.NewTerminal(compat, prompt)
 	s := &ServerTerminal{
@@ -425,7 +425,7 @@ func newServerShell(ch *nChannel, prompt string) *ServerTerminal {
 	return s
 }
 
-func exitStatusZeroHandler(ch *nChannel, t *testing.T) {
+func exitStatusZeroHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	// this string is returned to stdout
 	shell := newServerShell(ch, "> ")
@@ -433,14 +433,14 @@ func exitStatusZeroHandler(ch *nChannel, t *testing.T) {
 	sendStatus(0, ch, t)
 }
 
-func exitStatusNonZeroHandler(ch *nChannel, t *testing.T) {
+func exitStatusNonZeroHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
 	sendStatus(15, ch, t)
 }
 
-func exitSignalAndStatusHandler(ch *nChannel, t *testing.T) {
+func exitSignalAndStatusHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
@@ -448,27 +448,27 @@ func exitSignalAndStatusHandler(ch *nChannel, t *testing.T) {
 	sendSignal("TERM", ch, t)
 }
 
-func exitSignalHandler(ch *nChannel, t *testing.T) {
+func exitSignalHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
 	sendSignal("TERM", ch, t)
 }
 
-func exitSignalUnknownHandler(ch *nChannel, t *testing.T) {
+func exitSignalUnknownHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
 	sendSignal("SYS", ch, t)
 }
 
-func exitWithoutSignalOrStatus(ch *nChannel, t *testing.T) {
+func exitWithoutSignalOrStatus(ch *channel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
 }
 
-func shellHandler(ch *nChannel, t *testing.T) {
+func shellHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	// this string is returned to stdout
 	shell := newServerShell(ch, "golang")
@@ -478,7 +478,7 @@ func shellHandler(ch *nChannel, t *testing.T) {
 
 // Ignores the command, writes fixed strings to stderr and stdout.
 // Strings are "this-is-stdout." and "this-is-stderr.".
-func fixedOutputHandler(ch *nChannel, t *testing.T) {
+func fixedOutputHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	_, err := ch.pending.read(nil, true)
 	req, ok := err.(ChannelRequest)
@@ -509,7 +509,7 @@ func readLine(shell *ServerTerminal, t *testing.T) {
 	}
 }
 
-func sendStatus(status uint32, ch *nChannel, t *testing.T) {
+func sendStatus(status uint32, ch *channel, t *testing.T) {
 	msg := exitStatusMsg{
 		Status: status,
 	}
@@ -518,7 +518,7 @@ func sendStatus(status uint32, ch *nChannel, t *testing.T) {
 	}
 }
 
-func sendSignal(signal string, ch *nChannel, t *testing.T) {
+func sendSignal(signal string, ch *channel, t *testing.T) {
 	sig := exitSignalMsg{
 		Signal:     signal,
 		CoreDumped: false,
@@ -530,7 +530,7 @@ func sendSignal(signal string, ch *nChannel, t *testing.T) {
 	}
 }
 
-func discardHandler(ch *nChannel, t *testing.T) {
+func discardHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	// grow the window to avoid being fooled by
 	// the initial 1 << 14 window.
@@ -539,7 +539,7 @@ func discardHandler(ch *nChannel, t *testing.T) {
 	io.Copy(ioutil.Discard, ch)
 }
 
-func echoHandler(ch *nChannel, t *testing.T) {
+func echoHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	if n, err := copyNRandomly("echohandler", ch, ch, windowTestBytes); err != nil {
 		t.Errorf("short write, wrote %d, expected %d: %v ", n, windowTestBytes, err)
@@ -576,7 +576,7 @@ func copyNRandomly(title string, dst io.Writer, src io.Reader, n int) (int, erro
 	return written, nil
 }
 
-func channelKeepaliveSender(ch *nChannel, t *testing.T) {
+func channelKeepaliveSender(ch *channel, t *testing.T) {
 	defer ch.Close()
 	shell := newServerShell(ch, "> ")
 	readLine(shell, t)
@@ -621,7 +621,7 @@ func TestClientWriteEOF(t *testing.T) {
 	}
 }
 
-func simpleEchoHandler(ch *nChannel, t *testing.T) {
+func simpleEchoHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	data, err := ioutil.ReadAll(ch)
 	if err != nil {

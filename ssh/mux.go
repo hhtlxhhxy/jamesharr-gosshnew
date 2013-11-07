@@ -17,16 +17,14 @@ import (
 // If set, debug will log print messages sent and received.
 const debug = false
 
-// nChanList is identifcal to chanList except for the channel type. It
-// will be renamed once we make the existing code use nChannel +
-// mux. nChanList is a thread safe channel list.
-type nChanList struct {
+// chanList is a thread safe channel list.
+type chanList struct {
 	// protects concurrent access to chans
 	sync.Mutex
 
 	// chans are indexed by the local id of the channel, which the
 	// other side should send in the PeersId field.
-	chans []*nChannel
+	chans []*channel
 
 	// This is a debugging aid: it offsets all IDs by this
 	// amount. This helps distinguish otherwise identical
@@ -35,7 +33,7 @@ type nChanList struct {
 }
 
 // Assigns a channel ID to the given channel.
-func (c *nChanList) add(ch *nChannel) uint32 {
+func (c *chanList) add(ch *channel) uint32 {
 	c.Lock()
 	defer c.Unlock()
 	for i := range c.chans {
@@ -49,7 +47,7 @@ func (c *nChanList) add(ch *nChannel) uint32 {
 }
 
 // getChan returns the channel for the given ID.
-func (c *nChanList) getChan(id uint32) *nChannel {
+func (c *chanList) getChan(id uint32) *channel {
 	id -= c.offset
 
 	c.Lock()
@@ -60,7 +58,7 @@ func (c *nChanList) getChan(id uint32) *nChannel {
 	return nil
 }
 
-func (c *nChanList) remove(id uint32) {
+func (c *chanList) remove(id uint32) {
 	id -= c.offset
 	c.Lock()
 	if id < uint32(len(c.chans)) {
@@ -70,10 +68,10 @@ func (c *nChanList) remove(id uint32) {
 }
 
 // dropAll forgets all channels it knows, returning them in a slice.
-func (c *nChanList) dropAll() []*nChannel {
+func (c *chanList) dropAll() []*channel {
 	c.Lock()
 	defer c.Unlock()
-	var r []*nChannel
+	var r []*channel
 
 	for _, ch := range c.chans {
 		if ch == nil {
@@ -88,17 +86,17 @@ func (c *nChanList) dropAll() []*nChannel {
 // mux represents the state for the SSH connection protocol, which
 // multiplexes many channels onto a single packet transport.
 type mux struct {
-	conn      packetConn
-	nChanList nChanList
+	conn     packetConn
+	chanList chanList
 
-	incomingChannels chan *nChannel
+	incomingChannels chan *channel
 
 	globalSentMu     sync.Mutex
 	globalResponses  chan interface{}
 	incomingRequests chan *ChannelRequest
 }
 
-// Each new nChanList instantiation has a different offset.
+// Each new chanList instantiation has a different offset.
 var globalOff uint32
 
 // newMux returns a mux that runs over the given connection. Caller
@@ -106,11 +104,11 @@ var globalOff uint32
 func newMux(p packetConn) *mux {
 	m := &mux{
 		conn:             p,
-		incomingChannels: make(chan *nChannel, 16),
+		incomingChannels: make(chan *channel, 16),
 		globalResponses:  make(chan interface{}, 1),
 		incomingRequests: make(chan *ChannelRequest, 16),
 	}
-	m.nChanList.offset = atomic.AddUint32(&globalOff, 1)
+	m.chanList.offset = atomic.AddUint32(&globalOff, 1)
 	return m
 }
 
@@ -188,7 +186,7 @@ func (m *mux) Loop() error {
 		log.Println("loop exit", err)
 	}
 
-	for _, ch := range m.nChanList.dropAll() {
+	for _, ch := range m.chanList.dropAll() {
 		ch.mu.Lock()
 		ch.sentClose = true
 		ch.mu.Unlock()
@@ -217,7 +215,7 @@ func (m *mux) onePacket() error {
 
 	if debug {
 		p, _ := decode(packet)
-		log.Printf("decoding(%d): %d %#v - %d bytes", m.nChanList.offset, packet[0], p, len(packet))
+		log.Printf("decoding(%d): %d %#v - %d bytes", m.chanList.offset, packet[0], p, len(packet))
 	}
 
 	switch packet[0] {
@@ -237,7 +235,7 @@ func (m *mux) onePacket() error {
 		return ParseError{packet[0]}
 	}
 	id := binary.BigEndian.Uint32(packet[1:])
-	ch := m.nChanList.getChan(id)
+	ch := m.chanList.getChan(id)
 	if ch == nil {
 		return fmt.Errorf("ssh: invalid channel %d", id)
 	}
@@ -319,7 +317,7 @@ func (e *OpenChannelError) Error() string {
 
 // OpenChannel asks for a new channel. If the other side rejects, it
 // returns a *OpenChannelError.
-func (m *mux) OpenChannel(chanType string, extra []byte) (*nChannel, error) {
+func (m *mux) OpenChannel(chanType string, extra []byte) (*channel, error) {
 	ch := m.newChannel(chanType, extra)
 
 	// As per RFC 4253, section 6.1, 32k is also the minimum.
@@ -348,7 +346,7 @@ func (m *mux) OpenChannel(chanType string, extra []byte) (*nChannel, error) {
 		ch.decided = true
 		return ch, nil
 	case *channelOpenFailureMsg:
-		m.nChanList.remove(open.PeersId)
+		m.chanList.remove(open.PeersId)
 		return nil, &OpenChannelError{msg.Reason, msg.Message}
 	default:
 		return nil, fmt.Errorf("ssh: unexpected packet %T", msg)

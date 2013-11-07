@@ -112,13 +112,13 @@ func (c *ClientConn) handleGlobalRequests(incoming chan *ChannelRequest) {
 }
 
 // Handle channel open messages from the remote side.
-func (c *ClientConn) handleChannelOpens(in chan *nChannel) {
+func (c *ClientConn) handleChannelOpens(in chan *channel) {
 	for ch := range in {
 		c.handleChannelOpen(ch)
 	}
 }
 
-func (c *ClientConn) handleChannelOpen(ch *nChannel) {
+func (c *ClientConn) handleChannelOpen(ch *channel) {
 	switch ch.ChannelType() {
 	case "forwarded-tcpip":
 		laddr, rest, ok := parseTCPAddr(ch.ExtraData())
