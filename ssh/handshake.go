@@ -5,6 +5,7 @@
 package ssh
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -238,8 +239,7 @@ func (t *handshakeTransport) sendKexInitLocked() (*kexInitMsg, []byte, error) {
 		CompressionClientServer: supportedCompressions,
 		CompressionServerClient: supportedCompressions,
 	}
-
-	// TODO(hanwen): add random bits to kexInit.Cookie.
+	io.ReadFull(rand.Reader, msg.Cookie[:])
 
 	if len(t.hostKeys) > 0 {
 		for _, k := range t.hostKeys {
