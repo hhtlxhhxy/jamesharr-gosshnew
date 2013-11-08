@@ -142,6 +142,10 @@ func signAndMarshal(k Signer, rand io.Reader, data []byte) ([]byte, error) {
 
 // Handshake performs an SSH transport and client authentication on the given ServerConn.
 func (s *ServerConn) Handshake() error {
+	if len(s.config.hostKeys) == 0 {
+		return errors.New("ssh: server has no host keys")
+	}
+
 	var err error
 	s.serverVersion = []byte(packageVersion)
 	s.ClientVersion, err = exchangeVersions(s.sshConn.conn, s.serverVersion)
