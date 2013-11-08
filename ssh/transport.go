@@ -12,7 +12,6 @@ import (
 	"errors"
 	"hash"
 	"io"
-	"sync"
 )
 
 const (
@@ -40,7 +39,8 @@ type packetConn interface {
 	Close() error
 }
 
-// transport represents the SSH connection to the remote peer.
+// transport is the keyingTransport that implements the SSH packet
+// protocol.
 type transport struct {
 	reader
 	writer
@@ -69,7 +69,6 @@ type reader struct {
 
 // writer represents the outgoing connection state.
 type writer struct {
-	sync.Mutex // protects writer.Writer from concurrent writes
 	*bufio.Writer
 	rand io.Reader
 	common
@@ -193,8 +192,6 @@ func (w *writer) writePacket(packet []byte) error {
 	if len(packet) > maxPacket {
 		return errors.New("ssh: packet too large")
 	}
-	w.Mutex.Lock()
-	defer w.Mutex.Unlock()
 
 	paddingLength := packetSizeMultiple - (5+len(packet))%packetSizeMultiple
 	if paddingLength < 4 {
