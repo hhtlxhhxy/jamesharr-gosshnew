@@ -44,6 +44,7 @@ func dial(handler serverType, t *testing.T) *ClientConn {
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return
 			}
+
 			// We sometimes get ECONNRESET rather than EOF.
 			if _, ok := err.(*net.OpError); ok {
 				return
@@ -480,7 +481,7 @@ func shellHandler(ch *channel, t *testing.T) {
 // Strings are "this-is-stdout." and "this-is-stderr.".
 func fixedOutputHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
-	_, err := ch.pending.read(nil, true)
+	_, err := ch.Read(nil)
 	req, ok := err.(ChannelRequest)
 	if !ok {
 		t.Fatalf("error: expected channel request, got: %#v", err)

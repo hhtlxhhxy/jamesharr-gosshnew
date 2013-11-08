@@ -16,6 +16,8 @@ type buffer struct {
 	// protects concurrent access to head, tail and closed
 	*sync.Cond
 
+	// If set, return ChannelRequests as read errors.
+	requestErrors    bool
 	incomingRequests []*ChannelRequest
 
 	head *element // the buffer that will be read first
@@ -74,7 +76,7 @@ func (b *buffer) eof() error {
 // Read reads data from the internal buffer in buf.  Reads will block
 // if no data is available, or until the buffer is closed. If
 // requestErrors is set, return pending ChannelRequest as errors.
-func (b *buffer) read(buf []byte, requestErrors bool) (n int, err error) {
+func (b *buffer) Read(buf []byte) (n int, err error) {
 	b.Cond.L.Lock()
 	defer b.Cond.L.Unlock()
 
@@ -96,7 +98,7 @@ func (b *buffer) read(buf []byte, requestErrors bool) (n int, err error) {
 			break
 		}
 
-		if requestErrors && len(b.incomingRequests) > 0 {
+		if b.requestErrors && len(b.incomingRequests) > 0 {
 			err = *b.incomingRequests[0]
 			b.incomingRequests = b.incomingRequests[1:]
 			return 0, err
@@ -108,15 +110,11 @@ func (b *buffer) read(buf []byte, requestErrors bool) (n int, err error) {
 			err = io.EOF
 			break
 		}
-		if !requestErrors && len(buf) == 0 {
+		if !b.requestErrors && len(buf) == 0 {
 			break
 		}
 		// out of buffers, wait for producer
 		b.Cond.Wait()
 	}
 	return
-}
-
-func (b *buffer) Read(buf []byte) (n int, err error) {
-	return b.read(buf, false)
 }

@@ -441,6 +441,7 @@ type compatChannel struct {
 
 func newCompatChannel(ch *channel) *compatChannel {
 	c := &compatChannel{ch}
+	ch.pending.requestErrors = true
 	go c.loop()
 	return c
 }
@@ -453,8 +454,4 @@ func (c *compatChannel) loop() {
 
 func (c *compatChannel) Stderr() io.Writer {
 	return c.Extended(1)
-}
-
-func (c *compatChannel) Read(buf []byte) (int, error) {
-	return c.channel.pending.read(buf, true)
 }
