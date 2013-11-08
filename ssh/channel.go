@@ -301,6 +301,8 @@ func (c *channel) handlePacket(packet []byte) error {
 		close(c.msg)
 		close(c.incomingRequests)
 		c.mux.chanList.remove(c.localId)
+		// Unblock writers. The quantity 1 is arbitrary.
+		c.remoteWin.add(1)
 
 		return nil
 	case msgChannelEOF:

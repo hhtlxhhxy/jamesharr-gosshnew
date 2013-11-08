@@ -95,19 +95,10 @@ func TestMuxReadWrite(t *testing.T) {
 }
 
 func TestMuxFlowControl(t *testing.T) {
-	writerMux, readerMux := muxPair()
+	writer, reader, _ := channelPair(t)
 
 	// this goroutine reads just a bit.
 	go func() {
-		reader, ok := <-readerMux.incomingChannels
-		if !ok {
-			t.Fatalf("no incoming channel")
-		}
-		err := reader.Accept()
-		if err != nil {
-			t.Fatalf("Accept: %v", err)
-		}
-
 		b := make([]byte, 1024)
 		n, err := reader.Read(b)
 		if err != nil || n != len(b) {
@@ -115,13 +106,9 @@ func TestMuxFlowControl(t *testing.T) {
 		}
 	}()
 
-	writer, err := writerMux.OpenChannel("pipe", nil)
-	if err != nil {
-		t.Fatalf("OpenChannel: %v", err)
-	}
-
 	// This goroutine writes is blocked from writing by the slow
 	// reader
+	done := make(chan int, 1)
 	go func() {
 		largeData := make([]byte, 3*(1<<15))
 		n, err := writer.Write(largeData)
@@ -132,14 +119,53 @@ func TestMuxFlowControl(t *testing.T) {
 		if n != want {
 			t.Errorf("wrote %d, want %d", n, want)
 		}
+		done <- 1
 	}()
 
 	// Wait for a bit for things to subside. The write should be
 	// blocked.
 	time.Sleep(1 * time.Millisecond)
 
-	readerMux.Disconnect(0, "")
-	writerMux.Disconnect(0, "")
+	writer.mux.Disconnect(0, "")
+	reader.mux.Disconnect(0, "")
+	<-done
+}
+
+func TestMuxChannelFlowControl(t *testing.T) {
+	writer, reader, _ := channelPair(t)
+
+	// this goroutine reads just a bit.
+	go func() {
+		b := make([]byte, 1024)
+		n, err := reader.Read(b)
+		if err != nil || n != len(b) {
+			t.Errorf("Read: %v, %d bytes", err, n)
+		}
+		// Sleep so the writer will block.
+		time.Sleep(1 * time.Millisecond)
+		reader.Close()
+	}()
+
+	// This goroutine writes is blocked from writing by the slow
+	// reader
+	done := make(chan int, 1)
+	go func() {
+		largeData := make([]byte, 3*(1<<15))
+		n, err := writer.Write(largeData)
+		if err != io.EOF {
+			t.Errorf("want EOF, got %v", err)
+		}
+		want := 1024 + (1 << 15)
+		if n != want {
+			t.Errorf("wrote %d, want %d", n, want)
+		}
+		done <- 1
+	}()
+
+	// Wait for a bit for things to subside. The write should be
+	// blocked.
+	time.Sleep(1 * time.Millisecond)
+	<-done
 }
 
 func TestMuxReject(t *testing.T) {
