@@ -135,24 +135,26 @@ func TestMuxFlowControl(t *testing.T) {
 	reader, writer, idle := flowControlChannelPair()
 
 	// this goroutine reads just a bit.
+	readDone := make(chan int, 1)
 	go func() {
 		b := make([]byte, 1024)
 		n, err := reader.Read(b)
 		if err != nil || n != len(b) {
 			t.Errorf("Read: %v, %d bytes", err, n)
 		}
+		readDone <- 1
 	}()
 
 	// This goroutine writes is blocked from writing by the slow
 	// reader
 	done := make(chan int, 1)
 	go func() {
-		largeData := make([]byte, 3*defaultWindowSize)
+		largeData := make([]byte, 3*channelWindowSize)
 		n, err := writer.Write(largeData)
 		if err != io.EOF {
 			t.Errorf("want EOF, got %v", err)
 		}
-		want := 1024 + defaultWindowSize
+		want := 1024 + channelWindowSize
 		if n != want {
 			t.Errorf("wrote %d, want %d", n, want)
 		}
@@ -162,6 +164,7 @@ func TestMuxFlowControl(t *testing.T) {
 	// Wait for a bit for things to subside. The write should be
 	// blocked.
 	<-idle
+	<-readDone
 
 	writer.mux.Disconnect(0, "")
 	reader.mux.Disconnect(0, "")
@@ -190,12 +193,12 @@ func TestMuxChannelFlowControl(t *testing.T) {
 	// reader
 	wDone := make(chan int, 1)
 	go func() {
-		largeData := make([]byte, 3*defaultWindowSize)
+		largeData := make([]byte, 3*channelWindowSize)
 		n, err := writer.Write(largeData)
 		if err != io.EOF {
 			t.Errorf("want EOF, got %v", err)
 		}
-		want := 1024 + defaultWindowSize
+		want := 1024 + channelWindowSize
 		if n != want {
 			t.Errorf("wrote %d, want %d", n, want)
 		}

@@ -322,8 +322,7 @@ func (e *OpenChannelError) Error() string {
 func (m *mux) OpenChannel(chanType string, extra []byte) (*channel, error) {
 	ch := m.newChannel(chanType, extra)
 
-	// As per RFC 4253, section 6.1, 32k is also the minimum.
-	ch.maxPacket = 1 << 15
+	ch.maxPacket = channelMaxPacket
 
 	open := channelOpenMsg{
 		ChanType:         chanType,

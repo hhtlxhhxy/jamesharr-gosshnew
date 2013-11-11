@@ -13,7 +13,13 @@ import (
 	"sync"
 )
 
-const minPacketLength = 9
+const (
+	minPacketLength = 9
+	// As per RFC 4253, section 6.1, 32k is also the minimum.
+	channelMaxPacket = 1 << 15
+	// We follow OpenSSH here.
+	channelWindowSize = 64 * channelMaxPacket
+)
 
 // A Channel is an ordered, reliable, duplex stream that is
 // multiplexed over an SSH connection.
@@ -345,7 +351,7 @@ func (c *channel) handlePacket(packet []byte) error {
 func (m *mux) newChannel(chanType string, extraData []byte) *channel {
 	ch := &channel{
 		remoteWin:        window{Cond: newCond()},
-		myWindow:         defaultWindowSize,
+		myWindow:         channelWindowSize,
 		pending:          newBuffer(),
 		extPending:       newBuffer(),
 		incomingRequests: make(chan *ChannelRequest, 16),
@@ -356,8 +362,6 @@ func (m *mux) newChannel(chanType string, extraData []byte) *channel {
 	}
 
 	ch.localId = m.chanList.add(ch)
-	ch.myWindow = defaultWindowSize
-
 	return ch
 }
 

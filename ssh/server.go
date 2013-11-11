@@ -441,8 +441,6 @@ func (c *sshClientKeyboardInteractive) Challenge(user, instruction string, quest
 	return answers, nil
 }
 
-const defaultWindowSize = 32768
-
 // Accept reads and processes messages on a ServerConn. It must be called
 // in order to demultiplex messages to any resulting Channels.
 func (s *ServerConn) Accept() (Channel, error) {
