@@ -94,8 +94,45 @@ func TestMuxReadWrite(t *testing.T) {
 	}
 }
 
+type timingPacketConn struct {
+	packetConn
+	idle *time.Timer
+}
+
+func (c *timingPacketConn) readPacket() ([]byte, error) {
+	p, err := c.packetConn.readPacket()
+	if p != nil {
+		c.idle.Reset(10 * time.Millisecond)
+	}
+	return p, err
+}
+
+// Returns a channel pair, plus a chan that fires if the read side is idle.
+func flowControlChannelPair() (reader *channel, writer *channel, idle <-chan time.Time) {
+	wConn, b := memPipe()
+	rConn := &timingPacketConn{
+		packetConn: b,
+		idle:       time.NewTimer(100 * time.Millisecond),
+	}
+	rMux := newMux(rConn)
+	wMux := newMux(wConn)
+	go rMux.Loop()
+	go wMux.Loop()
+
+	out := make(chan *channel, 1)
+	go func() {
+		ch, _ := rMux.OpenChannel("flow", nil)
+		out <- ch
+	}()
+
+	writer = <-wMux.incomingChannels
+	writer.Accept()
+	reader = <-out
+	return reader, writer, rConn.idle.C
+}
+
 func TestMuxFlowControl(t *testing.T) {
-	writer, reader, _ := channelPair(t)
+	reader, writer, idle := flowControlChannelPair()
 
 	// this goroutine reads just a bit.
 	go func() {
@@ -110,12 +147,12 @@ func TestMuxFlowControl(t *testing.T) {
 	// reader
 	done := make(chan int, 1)
 	go func() {
-		largeData := make([]byte, 3*(1<<15))
+		largeData := make([]byte, 3*defaultWindowSize)
 		n, err := writer.Write(largeData)
 		if err != io.EOF {
 			t.Errorf("want EOF, got %v", err)
 		}
-		want := 1024 + (1 << 15)
+		want := 1024 + defaultWindowSize
 		if n != want {
 			t.Errorf("wrote %d, want %d", n, want)
 		}
@@ -124,16 +161,18 @@ func TestMuxFlowControl(t *testing.T) {
 
 	// Wait for a bit for things to subside. The write should be
 	// blocked.
-	time.Sleep(1 * time.Millisecond)
+	<-idle
 
 	writer.mux.Disconnect(0, "")
 	reader.mux.Disconnect(0, "")
+
 	<-done
 }
 
 func TestMuxChannelFlowControl(t *testing.T) {
-	writer, reader, _ := channelPair(t)
+	reader, writer, idle := flowControlChannelPair()
 
+	closeTrigger := make(chan int, 2)
 	// this goroutine reads just a bit.
 	go func() {
 		b := make([]byte, 1024)
@@ -142,30 +181,33 @@ func TestMuxChannelFlowControl(t *testing.T) {
 			t.Errorf("Read: %v, %d bytes", err, n)
 		}
 		// Sleep so the writer will block.
-		time.Sleep(1 * time.Millisecond)
+		<-closeTrigger
 		reader.Close()
+		closeTrigger <- 1
 	}()
 
 	// This goroutine writes is blocked from writing by the slow
 	// reader
-	done := make(chan int, 1)
+	wDone := make(chan int, 1)
 	go func() {
-		largeData := make([]byte, 3*(1<<15))
+		largeData := make([]byte, 3*defaultWindowSize)
 		n, err := writer.Write(largeData)
 		if err != io.EOF {
 			t.Errorf("want EOF, got %v", err)
 		}
-		want := 1024 + (1 << 15)
+		want := 1024 + defaultWindowSize
 		if n != want {
 			t.Errorf("wrote %d, want %d", n, want)
 		}
-		done <- 1
+		wDone <- 1
 	}()
 
 	// Wait for a bit for things to subside. The write should be
 	// blocked.
-	time.Sleep(1 * time.Millisecond)
-	<-done
+	<-idle
+	closeTrigger <- 1
+	<-wDone
+	<-closeTrigger
 }
 
 func TestMuxReject(t *testing.T) {
