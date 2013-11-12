@@ -55,6 +55,8 @@ func channelPair(t *testing.T) (*channel, *channel, *mux) {
 
 func TestMuxReadWrite(t *testing.T) {
 	s, c, _ := channelPair(t)
+	defer s.Close()
+	defer c.Close()
 
 	magic := "hello world"
 	magicExt := "hello stderr"
@@ -174,6 +176,8 @@ func TestMuxFlowControl(t *testing.T) {
 
 func TestMuxChannelFlowControl(t *testing.T) {
 	reader, writer, idle := flowControlChannelPair()
+	defer reader.Close()
+	defer writer.Close()
 
 	closeTrigger := make(chan int, 2)
 	// this goroutine reads just a bit.
@@ -215,6 +219,8 @@ func TestMuxChannelFlowControl(t *testing.T) {
 
 func TestMuxReject(t *testing.T) {
 	client, server := muxPair()
+	defer server.Close()
+	defer client.Close()
 
 	go func() {
 		ch, ok := <-server.incomingChannels
@@ -247,6 +253,9 @@ func TestMuxReject(t *testing.T) {
 
 func TestMuxChannelRequest(t *testing.T) {
 	client, server, _ := channelPair(t)
+	defer server.Close()
+	defer client.Close()
+
 	var received int
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -292,6 +301,8 @@ func TestMuxChannelRequest(t *testing.T) {
 
 func TestMuxGlobalRequest(t *testing.T) {
 	clientMux, serverMux := muxPair()
+	defer serverMux.Close()
+	defer clientMux.Close()
 
 	var seen bool
 	go func() {
@@ -335,6 +346,8 @@ func TestMuxGlobalRequest(t *testing.T) {
 
 func TestMuxGlobalRequestUnblock(t *testing.T) {
 	clientMux, serverMux := muxPair()
+	defer serverMux.Close()
+	defer clientMux.Close()
 
 	result := make(chan error, 1)
 	go func() {
@@ -353,6 +366,9 @@ func TestMuxGlobalRequestUnblock(t *testing.T) {
 
 func TestMuxChannelRequestUnblock(t *testing.T) {
 	a, b, connB := channelPair(t)
+	defer a.Close()
+	defer b.Close()
+	defer connB.Close()
 
 	result := make(chan error, 1)
 	go func() {
@@ -371,6 +387,9 @@ func TestMuxChannelRequestUnblock(t *testing.T) {
 
 func TestMuxDisconnect(t *testing.T) {
 	a, b := muxPair()
+	defer a.Close()
+	defer b.Close()
+
 	go func() {
 		for r := range b.incomingRequests {
 			if r.WantReply {
@@ -387,7 +406,10 @@ func TestMuxDisconnect(t *testing.T) {
 }
 
 func TestMuxCloseChannel(t *testing.T) {
-	r, w, _ := channelPair(t)
+	r, w, mux := channelPair(t)
+	defer mux.Close()
+	defer r.Close()
+	defer w.Close()
 
 	timeout := time.After(10 * time.Millisecond)
 	result := make(chan error, 1)
@@ -415,7 +437,8 @@ func TestMuxCloseChannel(t *testing.T) {
 }
 
 func TestMuxCloseWriteChannel(t *testing.T) {
-	r, w, _ := channelPair(t)
+	r, w, mux := channelPair(t)
+	defer mux.Close()
 
 	timeout := time.After(10 * time.Millisecond)
 	result := make(chan error, 1)
@@ -444,6 +467,8 @@ func TestMuxCloseWriteChannel(t *testing.T) {
 
 func TestMuxInvalidRecord(t *testing.T) {
 	a, b := muxPair()
+	defer a.Close()
+	defer b.Close()
 
 	packet := make([]byte, 1+4+4+1)
 	packet[0] = msgChannelData
@@ -461,7 +486,10 @@ func TestMuxInvalidRecord(t *testing.T) {
 }
 
 func TestZeroWindowAdjust(t *testing.T) {
-	a, b, _ := channelPair(t)
+	a, b, mux := channelPair(t)
+	defer a.Close()
+	defer b.Close()
+	defer mux.Close()
 
 	go func() {
 		io.WriteString(a, "hello")
@@ -480,7 +508,10 @@ func TestZeroWindowAdjust(t *testing.T) {
 }
 
 func TestMuxMaxPacketSize(t *testing.T) {
-	a, b, _ := channelPair(t)
+	a, b, mux := channelPair(t)
+	defer a.Close()
+	defer b.Close()
+	defer mux.Close()
 
 	large := make([]byte, a.maxPacket+1)
 	if err := a.writePacket(large); err == nil {

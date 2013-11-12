@@ -174,6 +174,10 @@ func (m *mux) Disconnect(reason uint32, message string) error {
 	})
 }
 
+func (m *mux) Close() error {
+	return m.conn.Close()
+}
+
 // Loop runs the connection machine. It will process packets until an
 // error is encountered, returning that error. When the loop exits,
 // the connection is closed.
