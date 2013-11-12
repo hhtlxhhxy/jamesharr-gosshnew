@@ -175,13 +175,13 @@ func newMockAuthServer(t *testing.T) string {
 			t.Errorf("Unable to accept incoming connection: %v", err)
 			return
 		}
+		defer c.Close()
 		if err := c.Handshake(); err != nil {
 			// not Errorf because this is expected to
 			// fail for some tests.
 			t.Logf("Handshaking error: %v", err)
 			return
 		}
-		defer c.Close()
 	}()
 	return l.Addr().String()
 }
