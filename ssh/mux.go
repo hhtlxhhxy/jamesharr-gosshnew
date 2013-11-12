@@ -14,8 +14,9 @@ import (
 	"sync/atomic"
 )
 
-// If set, debug will log print messages sent and received.
-const debug = false
+// debugMux, if set, causes messages in the connection protocol to be
+// logged.
+const debugMux = false
 
 // chanList is a thread safe channel list.
 type chanList struct {
@@ -186,7 +187,7 @@ func (m *mux) Loop() error {
 	for err == nil {
 		err = m.onePacket()
 	}
-	if debug && err != nil {
+	if debugMux && err != nil {
 		log.Println("loop exit", err)
 	}
 
@@ -219,9 +220,13 @@ func (m *mux) onePacket() error {
 		return err
 	}
 
-	if debug {
-		p, _ := decode(packet)
-		log.Printf("decoding(%d): %d %#v - %d bytes", m.chanList.offset, packet[0], p, len(packet))
+	if debugMux {
+		if packet[0] == msgChannelData || packet[0] == msgChannelExtendedData {
+			log.Printf("decoding(%d): data packet - %d bytes", m.chanList.offset, len(packet))
+		} else {
+			p, _ := decode(packet)
+			log.Printf("decoding(%d): %d %#v - %d bytes", m.chanList.offset, packet[0], p, len(packet))
+		}
 	}
 
 	switch packet[0] {
@@ -255,7 +260,7 @@ func (m *mux) handleDisconnect(packet []byte) error {
 		return err
 	}
 
-	if debug {
+	if debugMux {
 		// TODO(hanwen): the disconnect message has more
 		// diagnostics. We could try to return those?
 		log.Printf("caught disconnect: %v", d)

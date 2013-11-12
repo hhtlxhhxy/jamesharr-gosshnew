@@ -538,7 +538,10 @@ func TestMuxMaxPacketSize(t *testing.T) {
 
 // Don't ship code with debug=true.
 func TestDebug(t *testing.T) {
-	if debug {
-		t.Error("debug switched on")
+	if debugMux {
+		t.Error("mux debug switched on")
+	}
+	if debugHandshake {
+		t.Error("handshake debug switched on")
 	}
 }

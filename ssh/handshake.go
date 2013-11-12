@@ -14,6 +14,11 @@ import (
 	"sync"
 )
 
+// debugHandshake, if set, print messages sent and received.  Key
+// exchange messages are printed as if DH were used, so the debug
+// messages are wrong when using ECDH.
+const debugHandshake = false
+
 // keyingTransport is a packet based transport that supports key
 // changes. It need not be thread-safe. It should pass through
 // msgNewKeys in both directions.
@@ -170,7 +175,7 @@ func (t *handshakeTransport) readOnePacket() ([]byte, error) {
 	}
 
 	t.readSinceKex += uint64(len(p))
-	if debug {
+	if debugHandshake {
 		msg, err := decode(p)
 		log.Printf("%s got %T %v (%v)", t.id(), msg, msg, err)
 	}
@@ -186,7 +191,7 @@ func (t *handshakeTransport) readOnePacket() ([]byte, error) {
 		t.writeError = err
 	}
 
-	if debug {
+	if debugHandshake {
 		log.Printf("%s exited key exchange, err %v", t.id(), err)
 	}
 
@@ -297,7 +302,7 @@ func (t *handshakeTransport) Close() error {
 
 // enterKeyExchange runs the key exchange.
 func (t *handshakeTransport) enterKeyExchange(otherInitPacket []byte) error {
-	if debug {
+	if debugHandshake {
 		log.Printf("%s entered key exchange", t.id())
 	}
 	myInit, myInitPacket, err := t.sendKexInit()
