@@ -39,6 +39,7 @@ func clientWithAddress(c net.Conn, addr string, config *ClientConfig) (*ClientCo
 	}
 
 	if err := conn.handshake(); err != nil {
+		c.Close()
 		return nil, fmt.Errorf("ssh: handshake failed: %v", err)
 	}
 	conn.mux = newMux(conn.transport)
