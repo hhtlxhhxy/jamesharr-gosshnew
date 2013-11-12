@@ -62,7 +62,9 @@ func handshakePair(clientConf *ClientConfig, addr string) (client *handshakeTran
 	trC := newTransport(a, rand.Reader, true)
 	trS := newTransport(b, rand.Reader, false)
 
-	clientConf.HostKeyChecker = &testChecker{}
+	if clientConf.HostKeyChecker == nil {
+		clientConf.HostKeyChecker = &testChecker{}
+	}
 
 	v := []byte("version")
 	client = newClientTransport(trC, v, v, clientConf, addr, a.RemoteAddr())
@@ -146,7 +148,6 @@ func TestHandshakeError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handshakePair: %v", err)
 	}
-
 	defer trC.Close()
 	defer trS.Close()
 
@@ -278,9 +279,21 @@ func TestHandshakeAutoRekeyWrite(t *testing.T) {
 	}
 }
 
+type syncChecker struct {
+	called chan int
+}
+
+func (t *syncChecker) Check(dialAddr string, addr net.Addr, alg string, key []byte) error {
+	t.called <- 1
+	return nil
+}
+
 func TestHandshakeAutoRekeyRead(t *testing.T) {
 	clientConf := &ClientConfig{}
 	clientConf.Crypto.RekeyThreshold = 500
+	sync := &syncChecker{make(chan int, 2)}
+	clientConf.HostKeyChecker = sync
+
 	trC, trS, err := handshakePair(clientConf, "addr")
 	if err != nil {
 		t.Fatalf("handshakePair: %v", err)
@@ -288,30 +301,16 @@ func TestHandshakeAutoRekeyRead(t *testing.T) {
 	defer trC.Close()
 	defer trS.Close()
 
-	for i := 0; i < 5; i++ {
-		packet := make([]byte, 251)
-		packet[0] = msgRequestSuccess
-		if err := trS.writePacket(packet); err != nil {
-			t.Fatalf("writePacket: %v", err)
-		}
-
-		// Send some data the other direction to trigger the
-		// key change processing.
-		smallPacket := make([]byte, 2)
-		smallPacket[0] = msgRequestSuccess
-		if err := trC.writePacket(smallPacket); err != nil {
-			t.Fatalf("writePacket: %V", err)
-		}
-		if _, err := trC.readPacket(); err != nil {
-			t.Fatalf("readPacket(client): %v", err)
-		}
-		if _, err := trS.readPacket(); err != nil {
-			t.Fatalf("readPacket(server): %v", err)
-		}
+	packet := make([]byte, 501)
+	packet[0] = msgRequestSuccess
+	if err := trS.writePacket(packet); err != nil {
+		t.Fatalf("writePacket: %v", err)
+	}
+	// While we read out the packet, a key change will be
+	// initiated.
+	if _, err := trC.readPacket(); err != nil {
+		t.Fatalf("readPacket(client): %v", err)
 	}
 
-	checker := trC.checker.(*testChecker)
-	if len(checker.calls) != 2 {
-		t.Errorf("got %d key changes, wanted 2", len(checker.calls))
-	}
+	<-sync.called
 }
