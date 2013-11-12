@@ -95,6 +95,7 @@ func newClientTransport(conn keyingTransport, clientVersion, serverVersion []byt
 	t := newHandshakeTransport(conn, clientVersion, serverVersion)
 	t.setCryptoConfig(&config.Crypto)
 	t.dialAddress = dialAddr
+	t.remoteAddr = addr
 	t.rand = config.rand
 	t.checker = config.HostKeyChecker
 	go t.readLoop()

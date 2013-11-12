@@ -21,6 +21,10 @@ func (t *testChecker) Check(dialAddr string, addr net.Addr, alg string, key []by
 		return fmt.Errorf("dialAddr is bad")
 	}
 
+	if tcpAddr, ok := addr.(*net.TCPAddr); !ok || tcpAddr == nil {
+		return fmt.Errorf("testChecker: got %T want *net.TCPAddr", addr)
+	}
+
 	t.calls = append(t.calls, fmt.Sprintf("%s %v %s %x", dialAddr, addr, alg, key))
 
 	return nil
@@ -61,7 +65,7 @@ func handshakePair(clientConf *ClientConfig, addr string) (client *handshakeTran
 	clientConf.HostKeyChecker = &testChecker{}
 
 	v := []byte("version")
-	client = newClientTransport(trC, v, v, clientConf, addr, nil)
+	client = newClientTransport(trC, v, v, clientConf, addr, a.RemoteAddr())
 
 	serverConf := &ServerConfig{}
 	serverConf.AddHostKey(ecdsaKey)
@@ -126,7 +130,7 @@ func TestHandshakeBasic(t *testing.T) {
 	}
 
 	pub := ecdsaKey.PublicKey()
-	want := fmt.Sprintf("%s %v %s %x", "addr", nil, pub.PublicKeyAlgo(),
+	want := fmt.Sprintf("%s %v %s %x", "addr", trC.remoteAddr, pub.PublicKeyAlgo(),
 		MarshalPublicKey(pub))
 	if want != checker.calls[0] {
 		t.Errorf("got %q want %q for host key check", checker.calls[0], want)
