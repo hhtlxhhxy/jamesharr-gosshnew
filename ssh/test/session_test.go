@@ -107,7 +107,7 @@ func TestFuncLargeRead(t *testing.T) {
 		t.Fatalf("unable to acquire stdout pipe: %s", err)
 	}
 
-	err = session.Start("dd if=/dev/urandom bs=2048 count=1")
+	err = session.Start("dd if=/dev/urandom bs=2048 count=1024")
 	if err != nil {
 		t.Fatalf("unable to execute remote command: %s", err)
 	}
@@ -118,7 +118,7 @@ func TestFuncLargeRead(t *testing.T) {
 		t.Fatalf("error reading from remote stdout: %s", err)
 	}
 
-	if n != 2048 {
+	if n != 2048*1024 {
 		t.Fatalf("Expected %d bytes but read only %d from remote command", 2048, n)
 	}
 }

@@ -109,8 +109,12 @@ type channel struct {
 	chanType          string
 	extraData         []byte
 	localId, remoteId uint32
-	maxPacket         uint32
-	mux               *mux
+
+	// maxPayload is the maximum payload size of normal and
+	// extended data packets. The wire packet will be 9 or 13 bytes
+	// larger (excluding encryption overhead).
+	maxPayload uint32
+	mux        *mux
 
 	// If set, we have called Accept or Reject on this channel
 	decided bool
@@ -147,10 +151,6 @@ func (c *channel) getWindowSpace(max uint32) (uint32, error) {
 // channel close, it updates sentClose. This method takes the lock
 // c.mu.
 func (c *channel) writePacket(packet []byte) error {
-	if uint32(len(packet)) > c.maxPacket {
-		return fmt.Errorf("ssh: cannot write %d bytes, maxPacket is %d bytes", len(packet), c.maxPacket)
-	}
-
 	c.mu.Lock()
 	if c.sentClose {
 		c.mu.Unlock()
@@ -185,7 +185,7 @@ func (c *channel) WriteExtended(data []byte, extendedCode uint32) (n int, err er
 	}
 
 	for len(data) > 0 {
-		space := min(c.maxPacket-headerLength, len(data))
+		space := min(c.maxPayload, len(data))
 		if space, err = c.getWindowSpace(space); err != nil {
 			return n, err
 		}
@@ -211,25 +211,30 @@ func (c *channel) WriteExtended(data []byte, extendedCode uint32) (n int, err er
 }
 
 func (c *channel) handleData(packet []byte) error {
-	sz := 9
+	headerLen := 9
 	if packet[0] == msgChannelExtendedData {
-		sz = 13
+		headerLen = 13
 	}
-	if len(packet) < sz {
+	if len(packet) < headerLen {
 		// malformed data packet
 		return ParseError{packet[0]}
 	}
 
 	var extended uint32
-	if sz > 9 {
+	if headerLen > 9 {
 		extended = binary.BigEndian.Uint32(packet[5:])
 	}
 
-	length := binary.BigEndian.Uint32(packet[sz-4 : sz])
+	length := binary.BigEndian.Uint32(packet[headerLen-4 : headerLen])
 	if length == 0 {
 		return nil
 	}
-	data := packet[sz:]
+	if uint32(length) > c.maxPayload {
+		// TODO(hanwen): should send Disconnect?
+		return errors.New("ssh: incoming packet exceeds maximum payload size")
+	}
+
+	data := packet[headerLen:]
 	if length != uint32(len(data)) {
 		return errors.New("ssh: wrong packet length")
 	}
@@ -289,11 +294,6 @@ func (c *channel) ReadExtended(data []byte, extended uint32) (n int, err error) 
 }
 
 func (c *channel) handlePacket(packet []byte) error {
-	if uint32(len(packet)) > c.maxPacket {
-		// TODO(hanwen): should send Disconnect?
-		return errors.New("ssh: incoming packet exceeds maximum size")
-	}
-
 	switch packet[0] {
 	case msgChannelData, msgChannelExtendedData:
 		return c.handleData(packet)
@@ -389,7 +389,7 @@ func (c *channel) Accept() error {
 		PeersId:       c.remoteId,
 		MyId:          c.localId,
 		MyWindow:      c.myWindow,
-		MaxPacketSize: c.maxPacket,
+		MaxPacketSize: c.maxPayload,
 	}
 	c.decided = true
 	if err := c.sendMessage(msgChannelOpenConfirm, confirm); err != nil {
