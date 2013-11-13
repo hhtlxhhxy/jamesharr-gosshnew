@@ -329,11 +329,23 @@ func (c *channel) handlePacket(packet []byte) error {
 	}
 
 	switch msg := decoded.(type) {
+	case *channelOpenFailureMsg:
+		c.mux.chanList.remove(msg.PeersId)
+		c.msg <- msg
+	case *channelOpenConfirmMsg:
+		if msg.MaxPacketSize < minPacketLength || msg.MaxPacketSize > 1<<31 {
+			return errors.New("ssh: invalid MaxPacketSize from peer")
+		}
+		// fixup remoteId field
+		c.remoteId = msg.MyId
+		c.maxPayload = msg.MaxPacketSize
+		c.remoteWin.add(msg.MyWindow)
+		c.decided = true
+		c.msg <- msg
 	case *windowAdjustMsg:
 		if !c.remoteWin.add(msg.AdditionalBytes) {
 			return fmt.Errorf("invalid window update %d", msg.AdditionalBytes)
 		}
-
 	case *channelRequestMsg:
 		req := ChannelRequest{
 			Request:   msg.Request,

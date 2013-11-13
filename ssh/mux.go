@@ -6,7 +6,6 @@ package ssh
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -346,17 +345,8 @@ func (m *mux) OpenChannel(chanType string, extra []byte) (*channel, error) {
 
 	switch msg := (<-ch.msg).(type) {
 	case *channelOpenConfirmMsg:
-		if msg.MaxPacketSize < minPacketLength || msg.MaxPacketSize > 1<<31 {
-			return nil, errors.New("ssh: invalid MaxPacketSize from peer")
-		}
-		// fixup remoteId field
-		ch.remoteId = msg.MyId
-		ch.maxPayload = msg.MaxPacketSize
-		ch.remoteWin.add(msg.MyWindow)
-		ch.decided = true
 		return ch, nil
 	case *channelOpenFailureMsg:
-		m.chanList.remove(open.PeersId)
 		return nil, &OpenChannelError{msg.Reason, msg.Message}
 	default:
 		return nil, fmt.Errorf("ssh: unexpected packet %T", msg)
