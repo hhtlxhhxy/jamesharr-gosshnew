@@ -416,7 +416,6 @@ func TestMuxCloseChannel(t *testing.T) {
 	defer r.Close()
 	defer w.Close()
 
-	timeout := time.After(10 * time.Millisecond)
 	result := make(chan error, 1)
 	go func() {
 		var b [1024]byte
@@ -431,13 +430,8 @@ func TestMuxCloseChannel(t *testing.T) {
 		t.Errorf("got err %v, want io.EOF after Close", err)
 	}
 
-	select {
-	case e := <-result:
-		if e != io.EOF {
-			t.Errorf("got %v (%T), want io.EOF", e, e)
-		}
-	case <-timeout:
-		t.Errorf("timed out waiting for read to exit")
+	if err := <-result; err != io.EOF {
+		t.Errorf("got %v (%T), want io.EOF", err, err)
 	}
 }
 
@@ -445,7 +439,6 @@ func TestMuxCloseWriteChannel(t *testing.T) {
 	r, w, mux := channelPair(t)
 	defer mux.Close()
 
-	timeout := time.After(10 * time.Millisecond)
 	result := make(chan error, 1)
 	go func() {
 		var b [1024]byte
@@ -460,13 +453,8 @@ func TestMuxCloseWriteChannel(t *testing.T) {
 		t.Errorf("got err %v, want io.EOF after CloseWrite", err)
 	}
 
-	select {
-	case e := <-result:
-		if e != io.EOF {
-			t.Errorf("got %v (%T), want io.EOF", e, e)
-		}
-	case <-timeout:
-		t.Errorf("timed out waiting for read to exit")
+	if err := <-result; err != io.EOF {
+		t.Errorf("got %v (%T), want io.EOF", err, err)
 	}
 }
 
