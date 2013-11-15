@@ -27,8 +27,8 @@ func dial(handler serverType, t *testing.T) *ClientConn {
 		t.Fatalf("unable to listen: %v", err)
 	}
 	go func() {
-		defer l.Close()
 		conn, err := l.Accept()
+		l.Close()
 		if err != nil {
 			t.Errorf("Unable to accept: %v", err)
 			return

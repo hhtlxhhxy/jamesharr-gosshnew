@@ -54,9 +54,10 @@ func channelPair(t *testing.T) (*channel, *channel, *mux) {
 }
 
 func TestMuxReadWrite(t *testing.T) {
-	s, c, _ := channelPair(t)
+	s, c, mux := channelPair(t)
 	defer s.Close()
 	defer c.Close()
+	defer mux.Close()
 
 	magic := "hello world"
 	magicExt := "hello stderr"
@@ -135,6 +136,8 @@ func flowControlChannelPair() (reader *channel, writer *channel, idle <-chan tim
 
 func TestMuxFlowControl(t *testing.T) {
 	reader, writer, idle := flowControlChannelPair()
+	defer reader.Close()
+	defer writer.Close()
 
 	// this goroutine reads just a bit.
 	readDone := make(chan int, 1)
@@ -178,6 +181,7 @@ func TestMuxChannelFlowControl(t *testing.T) {
 	reader, writer, idle := flowControlChannelPair()
 	defer reader.Close()
 	defer writer.Close()
+	defer reader.mux.Close()
 
 	closeTrigger := make(chan int, 2)
 	// this goroutine reads just a bit.
@@ -252,9 +256,10 @@ func TestMuxReject(t *testing.T) {
 }
 
 func TestMuxChannelRequest(t *testing.T) {
-	client, server, _ := channelPair(t)
+	client, server, mux := channelPair(t)
 	defer server.Close()
 	defer client.Close()
+	defer mux.Close()
 
 	var received int
 	var wg sync.WaitGroup
