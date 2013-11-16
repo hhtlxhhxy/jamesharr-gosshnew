@@ -321,7 +321,8 @@ func newCond() *sync.Cond { return sync.NewCond(new(sync.Mutex)) }
 // wishing to write to a channel.
 type window struct {
 	*sync.Cond
-	win uint32 // RFC 4254 5.2 says the window size can grow to 2^32-1
+	win          uint32 // RFC 4254 5.2 says the window size can grow to 2^32-1
+	writeWaiters int
 }
 
 // add adds win to the amount of window available
@@ -350,15 +351,28 @@ func (w *window) add(win uint32) bool {
 // return less than requested.
 func (w *window) reserve(win uint32) uint32 {
 	w.L.Lock()
+	w.Broadcast()
+	w.writeWaiters++
 	for w.win == 0 {
 		w.Wait()
 	}
+	w.writeWaiters--
 	if w.win < win {
 		win = w.win
 	}
 	w.win -= win
 	w.L.Unlock()
 	return win
+}
+
+// waitWriterBlocked waits until some goroutine is blocked for further
+// writes. It is used in tests only.
+func (w *window) waitWriterBlocked() {
+	w.Cond.L.Lock()
+	for w.writeWaiters == 0 {
+		w.Cond.Wait()
+	}
+	w.Cond.L.Unlock()
 }
 
 type netConnMethods interface {

@@ -9,7 +9,6 @@ import (
 	"io/ioutil"
 	"sync"
 	"testing"
-	"time"
 )
 
 func muxPair() (*mux, *mux) {
@@ -97,128 +96,80 @@ func TestMuxReadWrite(t *testing.T) {
 	}
 }
 
-type timingPacketConn struct {
-	packetConn
-	idle *time.Timer
-}
-
-func (c *timingPacketConn) readPacket() ([]byte, error) {
-	p, err := c.packetConn.readPacket()
-	if p != nil {
-		c.idle.Reset(10 * time.Millisecond)
-	}
-	return p, err
-}
-
-// Returns a channel pair, plus a chan that fires if the read side is idle.
-func flowControlChannelPair() (reader *channel, writer *channel, idle <-chan time.Time) {
-	wConn, b := memPipe()
-	rConn := &timingPacketConn{
-		packetConn: b,
-		idle:       time.NewTimer(100 * time.Millisecond),
-	}
-	rMux := newMux(rConn)
-	wMux := newMux(wConn)
-	go rMux.Loop()
-	go wMux.Loop()
-
-	out := make(chan *channel, 1)
-	go func() {
-		ch, _ := rMux.OpenChannel("flow", nil)
-		out <- ch
-	}()
-
-	writer = <-wMux.incomingChannels
-	writer.Accept()
-	reader = <-out
-	return reader, writer, rConn.idle.C
-}
-
-func TestMuxFlowControl(t *testing.T) {
-	reader, writer, idle := flowControlChannelPair()
+func TestMuxChannelOverflow(t *testing.T) {
+	reader, writer, mux := channelPair(t)
 	defer reader.Close()
 	defer writer.Close()
+	defer mux.Close()
 
-	// this goroutine reads just a bit.
-	readDone := make(chan int, 1)
-	go func() {
-		b := make([]byte, 1024)
-		n, err := reader.Read(b)
-		if err != nil || n != len(b) {
-			t.Errorf("Read: %v, %d bytes", err, n)
-		}
-		readDone <- 1
-	}()
-
-	// This goroutine writes is blocked from writing by the slow
-	// reader
-	done := make(chan int, 1)
-	go func() {
-		largeData := make([]byte, 3*channelWindowSize)
-		n, err := writer.Write(largeData)
-		if err != io.EOF {
-			t.Errorf("want EOF, got %v", err)
-		}
-		want := 1024 + channelWindowSize
-		if n != want {
-			t.Errorf("wrote %d, want %d", n, want)
-		}
-		done <- 1
-	}()
-
-	// Wait for a bit for things to subside. The write should be
-	// blocked.
-	<-idle
-	<-readDone
-
-	writer.mux.Disconnect(0, "")
-	reader.mux.Disconnect(0, "")
-
-	<-done
-}
-
-func TestMuxChannelFlowControl(t *testing.T) {
-	reader, writer, idle := flowControlChannelPair()
-	defer reader.Close()
-	defer writer.Close()
-	defer reader.mux.Close()
-
-	closeTrigger := make(chan int, 2)
-	// this goroutine reads just a bit.
-	go func() {
-		b := make([]byte, 1024)
-		n, err := reader.Read(b)
-		if err != nil || n != len(b) {
-			t.Errorf("Read: %v, %d bytes", err, n)
-		}
-		// Sleep so the writer will block.
-		<-closeTrigger
-		reader.Close()
-		closeTrigger <- 1
-	}()
-
-	// This goroutine writes is blocked from writing by the slow
-	// reader
 	wDone := make(chan int, 1)
 	go func() {
-		largeData := make([]byte, 3*channelWindowSize)
-		n, err := writer.Write(largeData)
-		if err != io.EOF {
-			t.Errorf("want EOF, got %v", err)
+		if _, err := writer.Write(make([]byte, channelWindowSize)); err != nil {
+			t.Errorf("could not fill window: %v", err)
 		}
-		want := 1024 + channelWindowSize
-		if n != want {
-			t.Errorf("wrote %d, want %d", n, want)
+		writer.Write(make([]byte, 1))
+		wDone <- 1
+	}()
+	writer.remoteWin.waitWriterBlocked()
+
+	// Send 1 byte.
+	packet := make([]byte, 1+4+4+1)
+	packet[0] = msgChannelData
+	marshalUint32(packet[1:], writer.remoteId)
+	marshalUint32(packet[5:], uint32(1))
+	packet[9] = 42
+
+	if err := writer.mux.conn.writePacket(packet); err != nil {
+		t.Errorf("could not send packet")
+	}
+	if _, err := reader.SendRequest("hello", true, nil); err == nil {
+		t.Errorf("SendRequest succeeded.")
+	}
+	<-wDone
+}
+
+func TestMuxChannelCloseWriteUnblock(t *testing.T) {
+	reader, writer, mux := channelPair(t)
+	defer reader.Close()
+	defer writer.Close()
+	defer mux.Close()
+
+	wDone := make(chan int, 1)
+	go func() {
+		if _, err := writer.Write(make([]byte, channelWindowSize)); err != nil {
+			t.Errorf("could not fill window: %v", err)
+		}
+		if _, err := writer.Write(make([]byte, 1)); err != io.EOF {
+			t.Errorf("got %v, want EOF for unblock write", err)
 		}
 		wDone <- 1
 	}()
 
-	// Wait for a bit for things to subside. The write should be
-	// blocked.
-	<-idle
-	closeTrigger <- 1
+	writer.remoteWin.waitWriterBlocked()
+	reader.Close()
 	<-wDone
-	<-closeTrigger
+}
+
+func TestMuxConnectionCloseWriteUnblock(t *testing.T) {
+	reader, writer, mux := channelPair(t)
+	defer reader.Close()
+	defer writer.Close()
+	defer mux.Close()
+
+	wDone := make(chan int, 1)
+	go func() {
+		if _, err := writer.Write(make([]byte, channelWindowSize)); err != nil {
+			t.Errorf("could not fill window: %v", err)
+		}
+		if _, err := writer.Write(make([]byte, 1)); err != io.EOF {
+			t.Errorf("got %v, want EOF for unblock write", err)
+		}
+		wDone <- 1
+	}()
+
+	writer.remoteWin.waitWriterBlocked()
+	mux.Close()
+	<-wDone
 }
 
 func TestMuxReject(t *testing.T) {
