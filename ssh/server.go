@@ -345,10 +345,7 @@ userAuthLoop:
 				}
 
 				if !key.Verify(signedData, sig.Blob) {
-					// TODO(hanwen): fix this
-					// message. It's not a parse
-					// error
-					return ParseError{msgUserAuthRequest}
+					return errors.New("ssh: signature verification failed")
 				}
 				// TODO(jmpittman): Implement full validation for certificates.
 				s.User = userAuthReq.User
