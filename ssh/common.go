@@ -6,7 +6,9 @@ package ssh
 
 import (
 	"crypto"
+	"crypto/rand"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 
@@ -152,8 +154,14 @@ func findAgreedAlgorithms(clientKexInit, serverKexInit *kexInitMsg) (algs *algor
 // stuff.
 const minRekeyThreshold uint64 = 256
 
-// Cryptographic configuration common to both ServerConfig and ClientConfig.
-type CryptoConfig struct {
+// Config contains configuration data common to both ServerConfig and
+// ClientConfig.
+type Config struct {
+	// Rand provides the source of entropy for cryptographic
+	// primitives. If Rand is nil, the cryptographic random reader
+	// in package crypto/rand will be used.
+	Rand io.Reader
+
 	// The maximum number of bytes sent or received after which a
 	// new key is negotiated. It must be at least 256. If
 	// unspecified, 1 gigabyte is used.
@@ -171,21 +179,28 @@ type CryptoConfig struct {
 	MACs []string
 }
 
-func (c *CryptoConfig) ciphers() []string {
+func (c *Config) rand() io.Reader {
+	if c.Rand == nil {
+		return rand.Reader
+	}
+	return c.Rand
+}
+
+func (c *Config) ciphers() []string {
 	if c.Ciphers == nil {
 		return DefaultCipherOrder
 	}
 	return c.Ciphers
 }
 
-func (c *CryptoConfig) kexes() []string {
+func (c *Config) kexes() []string {
 	if c.KeyExchanges == nil {
 		return defaultKeyExchangeOrder
 	}
 	return c.KeyExchanges
 }
 
-func (c *CryptoConfig) macs() []string {
+func (c *Config) macs() []string {
 	if c.MACs == nil {
 		return DefaultMACOrder
 	}

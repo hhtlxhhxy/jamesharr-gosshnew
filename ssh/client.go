@@ -5,10 +5,8 @@
 package ssh
 
 import (
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 )
 
@@ -184,10 +182,8 @@ func Dial(network, addr string, config *ClientConfig) (*ClientConn, error) {
 // A ClientConfig structure is used to configure a ClientConn. After one has
 // been passed to an SSH function it must not be modified.
 type ClientConfig struct {
-	// Rand provides the source of entropy for key exchange. If Rand is
-	// nil, the cryptographic random reader in package crypto/rand will
-	// be used.
-	Rand io.Reader
+	// Shared configuration.
+	Config
 
 	// The username to authenticate.
 	User string
@@ -201,17 +197,7 @@ type ClientConfig struct {
 	// implies that all host keys are accepted.
 	HostKeyChecker HostKeyChecker
 
-	// Cryptographic-related configuration.
-	Crypto CryptoConfig
-
 	// The identification string that will be used for the connection.
 	// If empty, a reasonable default is used.
 	ClientVersion string
-}
-
-func (c *ClientConfig) rand() io.Reader {
-	if c.Rand == nil {
-		return rand.Reader
-	}
-	return c.Rand
 }

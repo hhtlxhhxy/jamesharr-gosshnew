@@ -14,7 +14,7 @@ import (
 	"sync"
 )
 
-// debugHandshake, if set, print messages sent and received.  Key
+// debugHandshake, if set, prints messages sent and received.  Key
 // exchange messages are printed as if DH were used, so the debug
 // messages are wrong when using ECDH.
 const debugHandshake = false
@@ -54,10 +54,7 @@ type rekeyingTransport interface {
 // and offers a thread-safe writePacket() interface.
 type handshakeTransport struct {
 	conn   keyingTransport
-	config *CryptoConfig
-
-	// TODO(hanwen): move Rand into CryptoConfig.
-	rand func() io.Reader
+	config *Config
 
 	serverVersion []byte
 	clientVersion []byte
@@ -98,10 +95,9 @@ func newHandshakeTransport(conn keyingTransport, clientVersion, serverVersion []
 
 func newClientTransport(conn keyingTransport, clientVersion, serverVersion []byte, config *ClientConfig, dialAddr string, addr net.Addr) *handshakeTransport {
 	t := newHandshakeTransport(conn, clientVersion, serverVersion)
-	t.setCryptoConfig(&config.Crypto)
+	t.setConfig(&config.Config)
 	t.dialAddress = dialAddr
 	t.remoteAddr = addr
-	t.rand = config.rand
 	t.checker = config.HostKeyChecker
 	go t.readLoop()
 	return t
@@ -109,9 +105,8 @@ func newClientTransport(conn keyingTransport, clientVersion, serverVersion []byt
 
 func newServerTransport(conn keyingTransport, clientVersion, serverVersion []byte, config *ServerConfig) *handshakeTransport {
 	t := newHandshakeTransport(conn, clientVersion, serverVersion)
-	t.setCryptoConfig(&config.Crypto)
+	t.setConfig(&config.Config)
 	t.hostKeys = config.hostKeys
-	t.rand = config.rand
 	go t.readLoop()
 	return t
 }
@@ -120,7 +115,7 @@ func (t *handshakeTransport) getSessionID() []byte {
 	return t.conn.getSessionID()
 }
 
-func (t *handshakeTransport) setCryptoConfig(c *CryptoConfig) {
+func (t *handshakeTransport) setConfig(c *Config) {
 	t.config = c
 	t.rekeyThreshold = t.config.RekeyThreshold
 	if t.rekeyThreshold == 0 {
@@ -382,12 +377,12 @@ func (t *handshakeTransport) server(kex kexAlgorithm, algs *algorithms, magics *
 		}
 	}
 
-	r, err := kex.Server(t.conn, t.rand(), magics, hostKey)
+	r, err := kex.Server(t.conn, t.config.rand(), magics, hostKey)
 	return r, err
 }
 
 func (t *handshakeTransport) client(kex kexAlgorithm, algs *algorithms, magics *handshakeMagics) (*kexResult, error) {
-	result, err := kex.Client(t.conn, t.rand(), magics)
+	result, err := kex.Client(t.conn, t.config.rand(), magics)
 	if err != nil {
 		return nil, err
 	}

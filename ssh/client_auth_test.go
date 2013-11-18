@@ -316,7 +316,7 @@ func TestClientHMAC(t *testing.T) {
 			Auth: []ClientAuth{
 				ClientAuthKeyring(kc),
 			},
-			Crypto: CryptoConfig{
+			Config: Config{
 				MACs: []string{mac},
 			},
 		}
@@ -336,7 +336,7 @@ func TestClientUnsupportedCipher(t *testing.T) {
 		Auth: []ClientAuth{
 			ClientAuthKeyring(kc),
 		},
-		Crypto: CryptoConfig{
+		Config: Config{
 			Ciphers: []string{"aes128-cbc"}, // not currently supported
 		},
 	}
@@ -354,7 +354,7 @@ func TestClientUnsupportedKex(t *testing.T) {
 		Auth: []ClientAuth{
 			ClientAuthKeyring(kc),
 		},
-		Crypto: CryptoConfig{
+		Config: Config{
 			KeyExchanges: []string{"diffie-hellman-group-exchange-sha256"}, // not currently supported
 		},
 	}

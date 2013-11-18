@@ -245,7 +245,7 @@ func TestHandshakeTwice(t *testing.T) {
 
 func TestHandshakeAutoRekeyWrite(t *testing.T) {
 	clientConf := &ClientConfig{}
-	clientConf.Crypto.RekeyThreshold = 500
+	clientConf.RekeyThreshold = 500
 	trC, trS, err := handshakePair(clientConf, "addr")
 	if err != nil {
 		t.Fatalf("handshakePair: %v", err)
@@ -290,7 +290,7 @@ func (t *syncChecker) Check(dialAddr string, addr net.Addr, alg string, key []by
 
 func TestHandshakeAutoRekeyRead(t *testing.T) {
 	clientConf := &ClientConfig{}
-	clientConf.Crypto.RekeyThreshold = 500
+	clientConf.RekeyThreshold = 500
 	sync := &syncChecker{make(chan int, 2)}
 	clientConf.HostKeyChecker = sync
 

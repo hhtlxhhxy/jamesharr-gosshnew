@@ -127,7 +127,7 @@ func TestKeyChange(t *testing.T) {
 	server := newServer(t)
 	defer server.Shutdown()
 	conf := clientConfig()
-	conf.Crypto.RekeyThreshold = 1024
+	conf.RekeyThreshold = 1024
 	conn := server.Dial(conf)
 	defer conn.Close()
 

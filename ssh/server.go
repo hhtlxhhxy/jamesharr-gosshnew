@@ -6,7 +6,6 @@ package ssh
 
 import (
 	"bytes"
-	"crypto/rand"
 	"errors"
 	"io"
 	"net"
@@ -15,12 +14,10 @@ import (
 )
 
 type ServerConfig struct {
-	hostKeys []Signer
+	// Shared configuration.
+	Config
 
-	// Rand provides the source of entropy for key exchange. If Rand is
-	// nil, the cryptographic random reader in package crypto/rand will
-	// be used.
-	Rand io.Reader
+	hostKeys []Signer
 
 	// NoClientAuth is true if clients are allowed to connect without
 	// authenticating.
@@ -44,16 +41,6 @@ type ServerConfig struct {
 	// should be presented a challenge even if the user is
 	// unknown.
 	KeyboardInteractiveCallback func(conn *ServerConn, user string, client ClientKeyboardInteractive) bool
-
-	// Cryptographic-related configuration.
-	Crypto CryptoConfig
-}
-
-func (c *ServerConfig) rand() io.Reader {
-	if c.Rand == nil {
-		return rand.Reader
-	}
-	return c.Rand
 }
 
 // AddHostKey adds a private key as a host key. If an existing host
