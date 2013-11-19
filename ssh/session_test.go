@@ -533,10 +533,6 @@ func sendSignal(signal string, ch *channel, t *testing.T) {
 
 func discardHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
-	// grow the window to avoid being fooled by
-	// the initial 1 << 14 window.
-	ch.adjustWindow(1024 * 1024)
-
 	io.Copy(ioutil.Discard, ch)
 }
 
