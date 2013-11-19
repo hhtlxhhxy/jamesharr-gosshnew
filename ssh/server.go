@@ -82,7 +82,7 @@ const maxCachedPubKeys = 16
 // A ServerConn represents an incoming connection.
 type ServerConn struct {
 	transport *handshakeTransport
-	config    *ServerConfig
+	config    ServerConfig
 	sshConn
 
 	// cachedPubKeys contains the cache results of tests for public keys.
@@ -110,10 +110,12 @@ type ServerConn struct {
 // Server returns a new SSH server connection
 // using c as the underlying transport.
 func Server(c net.Conn, config *ServerConfig) *ServerConn {
-	return &ServerConn{
+	s := &ServerConn{
 		sshConn: sshConn{c, c},
-		config:  config,
+		config:  *config,
 	}
+	s.config.setDefaults()
+	return s
 }
 
 // signAndMarshal signs the data with the appropriate algorithm,
@@ -140,8 +142,8 @@ func (s *ServerConn) Handshake() error {
 		return err
 	}
 
-	tr := newTransport(s.sshConn.conn, s.config.rand(), false /* not client */)
-	s.transport = newServerTransport(tr, s.ClientVersion, s.serverVersion, s.config)
+	tr := newTransport(s.sshConn.conn, s.config.Rand, false /* not client */)
+	s.transport = newServerTransport(tr, s.ClientVersion, s.serverVersion, &s.config)
 
 	if err := s.transport.requestKeyChange(); err != nil {
 		return err

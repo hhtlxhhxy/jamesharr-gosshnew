@@ -61,7 +61,7 @@ func handshakePair(clientConf *ClientConfig, addr string) (client *handshakeTran
 
 	trC := newTransport(a, rand.Reader, true)
 	trS := newTransport(b, rand.Reader, false)
-
+	clientConf.setDefaults()
 	if clientConf.HostKeyChecker == nil {
 		clientConf.HostKeyChecker = &testChecker{}
 	}
@@ -71,6 +71,7 @@ func handshakePair(clientConf *ClientConfig, addr string) (client *handshakeTran
 
 	serverConf := &ServerConfig{}
 	serverConf.AddHostKey(ecdsaKey)
+	serverConf.setDefaults()
 	server = newServerTransport(trS, v, v, serverConf)
 
 	return client, server, nil

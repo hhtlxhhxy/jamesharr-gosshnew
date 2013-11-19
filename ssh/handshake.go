@@ -70,8 +70,7 @@ type handshakeTransport struct {
 	dialAddress string
 	remoteAddr  net.Addr
 
-	rekeyThreshold uint64 // rekey after sending/receiving this much data.
-	readSinceKex   uint64
+	readSinceKex uint64
 
 	// Protects the writing side of the connection
 	mu              sync.Mutex
@@ -117,14 +116,6 @@ func (t *handshakeTransport) getSessionID() []byte {
 
 func (t *handshakeTransport) setConfig(c *Config) {
 	t.config = c
-	t.rekeyThreshold = t.config.RekeyThreshold
-	if t.rekeyThreshold == 0 {
-		// RFC 4253, section 9 suggests rekeying after 1G.
-		t.rekeyThreshold = 1 << 30
-	}
-	if t.rekeyThreshold < minRekeyThreshold {
-		t.rekeyThreshold = minRekeyThreshold
-	}
 }
 
 func (t *handshakeTransport) id() string {
@@ -158,7 +149,7 @@ func (t *handshakeTransport) readLoop() {
 }
 
 func (t *handshakeTransport) readOnePacket() ([]byte, error) {
-	if t.readSinceKex > t.rekeyThreshold {
+	if t.readSinceKex > t.config.RekeyThreshold {
 		if err := t.requestKeyChange(); err != nil {
 			return nil, err
 		}
@@ -232,11 +223,11 @@ func (t *handshakeTransport) sendKexInitLocked() (*kexInitMsg, []byte, error) {
 		return t.sentInitMsg, t.sentInitPacket, nil
 	}
 	msg := &kexInitMsg{
-		KexAlgos:                t.config.kexes(),
-		CiphersClientServer:     t.config.ciphers(),
-		CiphersServerClient:     t.config.ciphers(),
-		MACsClientServer:        t.config.macs(),
-		MACsServerClient:        t.config.macs(),
+		KexAlgos:                t.config.KeyExchanges,
+		CiphersClientServer:     t.config.Ciphers,
+		CiphersServerClient:     t.config.Ciphers,
+		MACsClientServer:        t.config.MACs,
+		MACsServerClient:        t.config.MACs,
 		CompressionClientServer: supportedCompressions,
 		CompressionServerClient: supportedCompressions,
 	}
@@ -267,7 +258,7 @@ func (t *handshakeTransport) sendKexInitLocked() (*kexInitMsg, []byte, error) {
 
 func (t *handshakeTransport) writePacket(p []byte) error {
 	t.mu.Lock()
-	if t.writtenSinceKex > t.rekeyThreshold {
+	if t.writtenSinceKex > t.config.RekeyThreshold {
 		t.sendKexInitLocked()
 	}
 	for t.sentInitMsg != nil {
@@ -377,12 +368,12 @@ func (t *handshakeTransport) server(kex kexAlgorithm, algs *algorithms, magics *
 		}
 	}
 
-	r, err := kex.Server(t.conn, t.config.rand(), magics, hostKey)
+	r, err := kex.Server(t.conn, t.config.Rand, magics, hostKey)
 	return r, err
 }
 
 func (t *handshakeTransport) client(kex kexAlgorithm, algs *algorithms, magics *handshakeMagics) (*kexResult, error) {
-	result, err := kex.Client(t.conn, t.config.rand(), magics)
+	result, err := kex.Client(t.conn, t.config.Rand, magics)
 	if err != nil {
 		return nil, err
 	}

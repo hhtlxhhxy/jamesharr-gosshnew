@@ -179,32 +179,29 @@ type Config struct {
 	MACs []string
 }
 
-func (c *Config) rand() io.Reader {
+// setDefaults sets sensible values for unset fields in config.
+func (c *Config) setDefaults() {
 	if c.Rand == nil {
-		return rand.Reader
+		c.Rand = rand.Reader
 	}
-	return c.Rand
-}
-
-func (c *Config) ciphers() []string {
 	if c.Ciphers == nil {
-		return DefaultCipherOrder
+		c.Ciphers = DefaultCipherOrder
 	}
-	return c.Ciphers
-}
 
-func (c *Config) kexes() []string {
 	if c.KeyExchanges == nil {
-		return defaultKeyExchangeOrder
+		c.KeyExchanges = defaultKeyExchangeOrder
 	}
-	return c.KeyExchanges
-}
 
-func (c *Config) macs() []string {
 	if c.MACs == nil {
-		return DefaultMACOrder
+		c.MACs = DefaultMACOrder
 	}
-	return c.MACs
+	if c.RekeyThreshold == 0 {
+		// RFC 4253, section 9 suggests rekeying after 1G.
+		c.RekeyThreshold = 1 << 30
+	}
+	if c.RekeyThreshold < minRekeyThreshold {
+		c.RekeyThreshold = minRekeyThreshold
+	}
 }
 
 // serialize a signed slice according to RFC 4254 6.6. The name should
