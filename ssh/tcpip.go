@@ -85,7 +85,7 @@ type channelForwardMsg struct {
 // on laddr. Incoming connections will be available by calling
 // Accept on the returned net.Listener.
 func (c *ClientConn) ListenTCP(laddr *net.TCPAddr) (net.Listener, error) {
-	if laddr.Port == 0 && isBrokenOpenSSHVersion(c.serverVersion) {
+	if laddr.Port == 0 && isBrokenOpenSSHVersion(string(c.serverVersion)) {
 		return c.autoPortListenWorkaround(laddr)
 	}
 

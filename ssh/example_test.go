@@ -18,8 +18,10 @@ func ExampleListen() {
 	// An SSH server is represented by a ServerConfig, which holds
 	// certificate details and handles authentication of ServerConns.
 	config := &ServerConfig{
-		PasswordCallback: func(conn *ServerConn, user, pass string) bool {
-			return user == "testuser" && pass == "tiger"
+		PasswordCallback: func(c ConnMetadata, pass []byte) bool {
+			// Should use constant-time compare (or better, salt+hash) in
+			// a production setting.
+			return c.User() == "testuser" && string(pass) == "tiger"
 		},
 	}
 

@@ -20,8 +20,7 @@ type ClientConn struct {
 	// Address as passed to the Dial function.
 	dialAddress string
 
-	serverVersion string
-	mux           *mux
+	mux *mux
 }
 
 // Client returns a new SSH client connection using c as the underlying transport.
@@ -31,7 +30,7 @@ func Client(c net.Conn, config *ClientConfig) (*ClientConn, error) {
 
 func clientWithAddress(c net.Conn, addr string, config *ClientConfig) (*ClientConn, error) {
 	conn := &ClientConn{
-		sshConn:     sshConn{c, c},
+		sshConn:     sshConn{conn: c},
 		config:      *config,
 		dialAddress: addr,
 	}
@@ -53,19 +52,20 @@ func clientWithAddress(c net.Conn, addr string, config *ClientConfig) (*ClientCo
 
 // handshake performs the client side key exchange. See RFC 4253 Section 7.
 func (c *ClientConn) handshake() error {
-	clientVersion := []byte(packageVersion)
+	c.clientVersion = []byte(packageVersion)
 	if c.config.ClientVersion != "" {
-		clientVersion = []byte(c.config.ClientVersion)
+		c.clientVersion = []byte(c.config.ClientVersion)
 	}
 
-	serverVersion, err := exchangeVersions(c.sshConn.conn, clientVersion)
+	var err error
+	c.serverVersion, err = exchangeVersions(c.sshConn.conn, c.clientVersion)
 	if err != nil {
 		return err
 	}
-	c.serverVersion = string(serverVersion)
+
 	c.transport = newClientTransport(
 		newTransport(c.sshConn.conn, c.config.Rand, true /* is client */),
-		clientVersion, serverVersion, &c.config, c.dialAddress, c.sshConn.RemoteAddr())
+		c.clientVersion, c.serverVersion, &c.config, c.dialAddress, c.sshConn.RemoteAddr())
 	if err := c.transport.requestKeyChange(); err != nil {
 		return err
 	}

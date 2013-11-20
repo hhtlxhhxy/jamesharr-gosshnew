@@ -113,16 +113,16 @@ var (
 	clientKeychain = new(keychain)
 	clientPassword = password("tiger")
 	serverConfig   = &ServerConfig{
-		PasswordCallback: func(conn *ServerConn, user, pass string) bool {
-			return user == "testuser" && pass == string(clientPassword)
+		PasswordCallback: func(conn ConnMetadata, pass []byte) bool {
+			return conn.User() == "testuser" && string(pass) == string(clientPassword)
 		},
-		PublicKeyCallback: func(conn *ServerConn, user, algo string, pubkey []byte) bool {
+		PublicKeyCallback: func(conn ConnMetadata, algo string, pubkey []byte) bool {
 			key, _ := clientKeychain.Key(0)
 			expected := MarshalPublicKey(key)
 			algoname := key.PublicKeyAlgo()
-			return user == "testuser" && algo == algoname && bytes.Equal(pubkey, expected)
+			return conn.User() == "testuser" && algo == algoname && bytes.Equal(pubkey, expected)
 		},
-		KeyboardInteractiveCallback: func(conn *ServerConn, user string, client ClientKeyboardInteractive) bool {
+		KeyboardInteractiveCallback: func(conn ConnMetadata, client ClientKeyboardInteractive) bool {
 			ans, err := client.Challenge("user",
 				"instruction",
 				[]string{"question1", "question2"},
@@ -130,7 +130,7 @@ var (
 			if err != nil {
 				return false
 			}
-			ok := user == "testuser" && ans[0] == "answer1" && ans[1] == "answer2"
+			ok := conn.User() == "testuser" && ans[0] == "answer1" && ans[1] == "answer2"
 			client.Challenge("user", "motd", nil, nil)
 			return ok
 		},

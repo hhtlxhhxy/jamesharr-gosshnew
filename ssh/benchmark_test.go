@@ -10,27 +10,17 @@ import (
 	"testing"
 )
 
-type dummyPasswd struct{}
-
-func (dummyPasswd) Password(user string) (string, error) {
-	return "", nil
-}
-
 func sshPipe() (*ClientConn, *ServerConn, error) {
 	c1, c2, err := netPipe()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	d := dummyPasswd{}
 	clientConf := ClientConfig{
 		User: "user",
-		Auth: []ClientAuth{
-			ClientAuthPassword(&d),
-		},
 	}
 	serverConf := ServerConfig{
-		PasswordCallback: func(conn *ServerConn, u, p string) bool { return true },
+		NoClientAuth: true,
 	}
 	serverConf.AddHostKey(ecdsaKey)
 	done := make(chan *ServerConn, 1)

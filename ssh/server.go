@@ -26,12 +26,12 @@ type ServerConfig struct {
 	// PasswordCallback, if non-nil, is called when a user attempts to
 	// authenticate using a password. It may be called concurrently from
 	// several goroutines.
-	PasswordCallback func(conn *ServerConn, user, password string) bool
+	PasswordCallback func(conn ConnMetadata, password []byte) bool
 
 	// PublicKeyCallback, if non-nil, is called when a client attempts public
 	// key authentication. It must return true if the given public key is
 	// valid for the given user.
-	PublicKeyCallback func(conn *ServerConn, user, algo string, pubkey []byte) bool
+	PublicKeyCallback func(conn ConnMetadata, algo string, pubkey []byte) bool
 
 	// KeyboardInteractiveCallback, if non-nil, is called when
 	// keyboard-interactive authentication is selected (RFC
@@ -40,7 +40,7 @@ type ServerConfig struct {
 	// Challenge rounds. To avoid information leaks, the client
 	// should be presented a challenge even if the user is
 	// unknown.
-	KeyboardInteractiveCallback func(conn *ServerConn, user string, client ClientKeyboardInteractive) bool
+	KeyboardInteractiveCallback func(conn ConnMetadata, client ClientKeyboardInteractive) bool
 }
 
 // AddHostKey adds a private key as a host key. If an existing host
@@ -91,18 +91,6 @@ type ServerConn struct {
 	// queries for public key validity.
 	cachedPubKeys []cachedPubKey
 
-	// User holds the successfully authenticated user name.
-	// It is empty if no authentication is used.  It is populated before
-	// any authentication callback is called and not assigned to after that.
-	User string
-
-	// ClientVersion is the client's version, populated after
-	// Handshake is called. It should not be modified.
-	ClientVersion []byte
-
-	// Our version.
-	serverVersion []byte
-
 	// The connection protocol.
 	mux *mux
 }
@@ -111,7 +99,7 @@ type ServerConn struct {
 // using c as the underlying transport.
 func Server(c net.Conn, config *ServerConfig) *ServerConn {
 	s := &ServerConn{
-		sshConn: sshConn{c, c},
+		sshConn: sshConn{conn: c},
 		config:  *config,
 	}
 	s.config.setDefaults()
@@ -137,13 +125,13 @@ func (s *ServerConn) Handshake() error {
 
 	var err error
 	s.serverVersion = []byte(packageVersion)
-	s.ClientVersion, err = exchangeVersions(s.sshConn.conn, s.serverVersion)
+	s.clientVersion, err = exchangeVersions(s.sshConn.conn, s.serverVersion)
 	if err != nil {
 		return err
 	}
 
 	tr := newTransport(s.sshConn.conn, s.config.Rand, false /* not client */)
-	s.transport = newServerTransport(tr, s.ClientVersion, s.serverVersion, &s.config)
+	s.transport = newServerTransport(tr, s.clientVersion, s.serverVersion, &s.config)
 
 	if err := s.transport.requestKeyChange(); err != nil {
 		return err
@@ -202,21 +190,21 @@ func (s *ServerConn) handleGlobalRequests() {
 }
 
 // testPubKey returns true if the given public key is acceptable for the user.
-func (s *ServerConn) testPubKey(user, algo string, pubKey []byte) bool {
+func (s *ServerConn) testPubKey(algo string, pubKey []byte) bool {
 	if s.config.PublicKeyCallback == nil || !isAcceptableAlgo(algo) {
 		return false
 	}
 
 	for _, c := range s.cachedPubKeys {
-		if c.user == user && c.algo == algo && bytes.Equal(c.pubKey, pubKey) {
+		if c.user == s.user && c.algo == algo && bytes.Equal(c.pubKey, pubKey) {
 			return c.result
 		}
 	}
 
-	result := s.config.PublicKeyCallback(s, user, algo, pubKey)
+	result := s.config.PublicKeyCallback(s, algo, pubKey)
 	if len(s.cachedPubKeys) < maxCachedPubKeys {
 		c := cachedPubKey{
-			user:   user,
+			user:   s.user,
 			algo:   algo,
 			pubKey: make([]byte, len(pubKey)),
 			result: result,
@@ -246,9 +234,11 @@ userAuthLoop:
 			return errors.New("ssh: client attempted to negotiate for unknown service: " + userAuthReq.Service)
 		}
 
+		s.user = userAuthReq.User
 		switch userAuthReq.Method {
 		case "none":
 			if s.config.NoClientAuth {
+				s.user = ""
 				break userAuthLoop
 			}
 		case "password":
@@ -265,8 +255,7 @@ userAuthLoop:
 				return ParseError{msgUserAuthRequest}
 			}
 
-			s.User = userAuthReq.User
-			if s.config.PasswordCallback(s, userAuthReq.User, string(password)) {
+			if s.config.PasswordCallback(s, password) {
 				break userAuthLoop
 			}
 		case "keyboard-interactive":
@@ -274,8 +263,7 @@ userAuthLoop:
 				break
 			}
 
-			s.User = userAuthReq.User
-			if s.config.KeyboardInteractiveCallback(s, s.User, &sshClientKeyboardInteractive{s}) {
+			if s.config.KeyboardInteractiveCallback(s, &sshClientKeyboardInteractive{s}) {
 				break userAuthLoop
 			}
 		case "publickey":
@@ -304,7 +292,7 @@ userAuthLoop:
 				if len(payload) > 0 {
 					return ParseError{msgUserAuthRequest}
 				}
-				if s.testPubKey(userAuthReq.User, algo, pubKey) {
+				if s.testPubKey(algo, pubKey) {
 					okMsg := userAuthPubKeyOkMsg{
 						Algo:   algo,
 						PubKey: string(pubKey),
@@ -337,8 +325,7 @@ userAuthLoop:
 					return errors.New("ssh: signature verification failed")
 				}
 				// TODO(jmpittman): Implement full validation for certificates.
-				s.User = userAuthReq.User
-				if s.testPubKey(userAuthReq.User, algo, pubKey) {
+				if s.testPubKey(algo, pubKey) {
 					break userAuthLoop
 				}
 			}

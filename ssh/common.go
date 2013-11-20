@@ -387,15 +387,68 @@ func (w *window) waitWriterBlocked() {
 	w.Cond.L.Unlock()
 }
 
-type netConnMethods interface {
-	Close() error
-	RemoteAddr() net.Addr
-	LocalAddr() net.Addr
-}
-
 // sshconn provides net.Conn metadata, but disallows direct reads and
 // writes.
 type sshConn struct {
-	netConnMethods
 	conn net.Conn
+
+	user          string
+	sessionID     []byte
+	clientVersion []byte
+	serverVersion []byte
+}
+
+func dup(src []byte) []byte {
+	dst := make([]byte, len(src))
+	copy(dst, src)
+	return dst
+}
+
+func (c *sshConn) User() string {
+	return c.user
+}
+
+func (c *sshConn) RemoteAddr() net.Addr {
+	return c.conn.RemoteAddr()
+}
+
+func (c *sshConn) Close() error {
+	return c.conn.Close()
+}
+
+func (c *sshConn) LocalAddr() net.Addr {
+	return c.conn.LocalAddr()
+}
+
+func (c *sshConn) SessionID() []byte {
+	return dup(c.sessionID)
+}
+
+func (c *sshConn) ClientVersion() []byte {
+	return dup(c.clientVersion)
+}
+
+func (c *sshConn) ServerVersion() []byte {
+	return dup(c.serverVersion)
+}
+
+// ConnMetadata holds metadata for the connection.
+type ConnMetadata interface {
+	// User returns the user ID for this connection.
+	// It is empty if no authentication is used.
+	User() string
+
+	// SessionID returns the sesson hash, also denoted by H.
+	SessionID() []byte
+
+	// ClientVersion returns the client's version string as hashed
+	// into the session ID.
+	ClientVersion() []byte
+
+	// ServerVersion returns the client's version string as hashed
+	// into the session ID.
+	ServerVersion() []byte
+
+	RemoteAddr() net.Addr
+	LocalAddr() net.Addr
 }
