@@ -136,7 +136,7 @@ type forwardEntry struct {
 // arguments to add/remove/lookup should be address as specified in
 // the original forward-request.
 type forward struct {
-	c     *channel     // the ssh client channel underlying this forward
+	c     Channel      // the ssh client channel underlying this forward
 	raddr *net.TCPAddr // the raddr of the incoming connection
 }
 
@@ -200,7 +200,7 @@ func (l *tcpListener) Accept() (net.Conn, error) {
 		return nil, io.EOF
 	}
 	return &tcpChanConn{
-		channel: s.c,
+		Channel: s.c,
 		laddr:   l.laddr,
 		raddr:   s.raddr,
 	}, nil
@@ -249,7 +249,7 @@ func (c *ClientConn) Dial(n, addr string) (net.Conn, error) {
 		return nil, err
 	}
 	return &tcpChanConn{
-		channel: ch,
+		Channel: ch,
 		laddr:   zeroAddr,
 		raddr:   zeroAddr,
 	}, nil
@@ -270,7 +270,7 @@ func (c *ClientConn) DialTCP(n string, laddr, raddr *net.TCPAddr) (net.Conn, err
 		return nil, err
 	}
 	return &tcpChanConn{
-		channel: ch,
+		Channel: ch,
 		laddr:   laddr,
 		raddr:   raddr,
 	}, nil
@@ -301,7 +301,7 @@ type tcpChan struct {
 // tcpChanConn fulfills the net.Conn interface without
 // the tcpChan having to hold laddr or raddr directly.
 type tcpChanConn struct {
-	*channel
+	Channel
 	laddr, raddr net.Addr
 }
 

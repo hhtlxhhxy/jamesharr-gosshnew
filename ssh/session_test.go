@@ -40,7 +40,7 @@ func dial(handler serverType, t *testing.T) *ClientConn {
 		}
 		done := make(chan struct{})
 		for {
-			ch, err := conn.Accept()
+			newCh, err := conn.Accept()
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return
 			}
@@ -53,17 +53,18 @@ func dial(handler serverType, t *testing.T) *ClientConn {
 				t.Errorf("Unable to accept incoming channel request: %v", err)
 				return
 			}
-			if ch.ChannelType() != "session" {
-				ch.Reject(UnknownChannelType, "unknown channel type")
+			if newCh.ChannelType() != "session" {
+				newCh.Reject(UnknownChannelType, "unknown channel type")
 				continue
 			}
 
-			if err = ch.Accept(); err != nil {
+			ch, _, err := newCh.Accept()
+			if err != nil {
 				t.Errorf("Accept: %v", err)
 			}
 			go func() {
 				defer close(done)
-				handler(ch.(*compatChannel).channel, t)
+				handler(ch.(*channel), t)
 			}()
 		}
 		<-done
@@ -417,12 +418,12 @@ type exitSignalMsg struct {
 }
 
 func newServerShell(ch *channel, prompt string) *ServerTerminal {
-	compat := newCompatChannel(ch)
-	term := terminal.NewTerminal(compat, prompt)
+	term := terminal.NewTerminal(ch, prompt)
 	s := &ServerTerminal{
 		Term:    term,
-		Channel: compat,
+		Channel: ch,
 	}
+	go s.HandleRequests(ch.incomingRequests)
 	return s
 }
 
@@ -482,7 +483,8 @@ func shellHandler(ch *channel, t *testing.T) {
 func fixedOutputHandler(ch *channel, t *testing.T) {
 	defer ch.Close()
 	_, err := ch.Read(nil)
-	req, ok := err.(ChannelRequest)
+
+	req, ok := <-ch.incomingRequests
 	if !ok {
 		t.Fatalf("error: expected channel request, got: %#v", err)
 		return

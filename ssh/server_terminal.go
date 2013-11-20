@@ -46,19 +46,9 @@ func (ss *ServerTerminal) Write(buf []byte) (n int, err error) {
 	return ss.Term.Write(buf)
 }
 
-// ReadLine returns a line of input from the terminal.
-func (ss *ServerTerminal) ReadLine() (line string, err error) {
-	for {
-		if line, err = ss.Term.ReadLine(); err == nil {
-			return
-		}
-
-		req, ok := err.(ChannelRequest)
-		if !ok {
-			return
-		}
-
-		ok = false
+func (ss *ServerTerminal) HandleRequests(in <-chan *ChannelRequest) {
+	for req := range in {
+		ok := false
 		switch req.Request {
 		case "pty-req":
 			var width, height int
@@ -77,5 +67,9 @@ func (ss *ServerTerminal) ReadLine() (line string, err error) {
 			ss.Channel.AckRequest(ok)
 		}
 	}
-	panic("unreachable")
+}
+
+// ReadLine returns a line of input from the terminal.
+func (ss *ServerTerminal) ReadLine() (line string, err error) {
+	return ss.Term.ReadLine()
 }

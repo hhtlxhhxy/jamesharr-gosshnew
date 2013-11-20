@@ -57,7 +57,7 @@ func ExampleListen() {
 		// channel request is seen. Some goroutine must always be
 		// calling Accept; otherwise no messages will be forwarded
 		// to the channels.
-		channel, err := sConn.Accept()
+		newChannel, err := sConn.Accept()
 		if err != nil {
 			panic("error from Accept")
 		}
@@ -66,12 +66,15 @@ func ExampleListen() {
 		// protocol intended. In the case of a shell, the type is
 		// "session" and ServerShell may be used to present a simple
 		// terminal interface.
-		if channel.ChannelType() != "session" {
-			channel.Reject(UnknownChannelType, "unknown channel type")
+		if newChannel.ChannelType() != "session" {
+			newChannel.Reject(UnknownChannelType, "unknown channel type")
 			continue
 		}
-		channel.Accept()
-
+		channel, incoming, err := newChannel.Accept()
+		if err != nil {
+			panic("could not accept channel.")
+		}
+		go DiscardIncoming(incoming)
 		term := terminal.NewTerminal(channel, "> ")
 		serverTerm := &ServerTerminal{
 			Term:    term,

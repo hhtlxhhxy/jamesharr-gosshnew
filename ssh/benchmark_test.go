@@ -72,12 +72,12 @@ func BenchmarkEndToEnd(b *testing.B) {
 	done := make(chan int, 1)
 
 	go func() {
-		ch, err := server.Accept()
+		newCh, err := server.Accept()
 		if err != nil {
 			b.Fatalf("Client: %v", err)
 		}
-
-		ch.Accept()
+		ch, incoming, err := newCh.Accept()
+		go DiscardIncoming(incoming)
 		for i := 0; i < b.N; i++ {
 			if _, err := io.ReadFull(ch, output); err != nil {
 				b.Fatalf("ReadFull: %v")

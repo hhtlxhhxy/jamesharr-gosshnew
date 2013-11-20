@@ -37,8 +37,7 @@ func channelPair(t *testing.T) (*channel, *channel, *mux) {
 		if ch.ChannelType() != "chan" {
 			t.Fatalf("got type %q want chan", ch.ChannelType())
 		}
-		err := ch.Accept()
-		if err != nil {
+		if _, _, err := ch.Accept(); err != nil {
 			t.Fatalf("Accept %v", err)
 		}
 		res <- ch

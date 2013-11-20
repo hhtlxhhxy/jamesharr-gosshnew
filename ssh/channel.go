@@ -21,16 +21,30 @@ const (
 	channelWindowSize = 64 * channelMaxPacket
 )
 
-// A Channel is an ordered, reliable, duplex stream that is
-// multiplexed over an SSH connection.
-type Channel interface {
-	// Accept accepts the channel creation request.
-	Accept() error
+// NewChannel is a new incoming channel. It must either be accepted
+// for use with the Accept method or rejected with Reject.
+type NewChannel interface {
+	// Accept accepts the channel creation request. Returns the
+	// channel and the side-channel for requests. The channel must
+	// be serviced.
+	Accept() (Channel, <-chan *ChannelRequest, error)
 
 	// Reject rejects the channel creation request. After calling
 	// this, no other methods on the Channel may be called.
 	Reject(reason RejectionReason, message string) error
 
+	// ChannelType returns the type of the channel, as supplied by the
+	// client.
+	ChannelType() string
+
+	// ExtraData returns the arbitrary payload for this channel, as supplied
+	// by the client. This data is specific to the channel type.
+	ExtraData() []byte
+}
+
+// A Channel is an ordered, reliable, duplex stream that is
+// multiplexed over an SSH connection.
+type Channel interface {
 	// Read may return a ChannelRequest as an error.
 	Read(data []byte) (int, error)
 	Write(data []byte) (int, error)
@@ -39,9 +53,9 @@ type Channel interface {
 	// call.
 	Close() error
 
-	// Stderr returns an io.Writer that writes to this channel with the
+	// Stderr returns an io.ReadWriter that writes to this channel with the
 	// extended data type set to stderr.
-	Stderr() io.Writer
+	Stderr() io.ReadWriter
 
 	// AckRequest either sends an ack or nack to the channel
 	// request. It should only be called if the last
@@ -63,10 +77,6 @@ type ChannelRequest struct {
 	Request   string
 	WantReply bool
 	Payload   []byte
-}
-
-func (c ChannelRequest) Error() string {
-	return "ssh: channel request received"
 }
 
 // RejectionReason is an enumeration used when rejecting channel creation
@@ -315,10 +325,6 @@ func (c *channel) handlePacket(packet []byte) error {
 		// RFC 4254 is mute on how EOF affects dataExt messages but
 		// it is logical to signal EOF at the same time.
 		c.extPending.eof()
-
-		// For ServerConn, ChannelRequests are actually output
-		// as Read error. This means that no requests can be
-		// processed after EOF is sent, which is a bug
 		c.pending.eof()
 		return nil
 	}
@@ -393,9 +399,9 @@ func (e *extChannel) Read(data []byte) (n int, err error) {
 	return e.ch.ReadExtended(data, e.code)
 }
 
-func (c *channel) Accept() error {
+func (c *channel) Accept() (Channel, <-chan *ChannelRequest, error) {
 	if c.decided {
-		return errDecidedAlready
+		return nil, nil, errDecidedAlready
 	}
 	confirm := channelOpenConfirmMsg{
 		PeersId:       c.remoteId,
@@ -405,10 +411,10 @@ func (c *channel) Accept() error {
 	}
 	c.decided = true
 	if err := c.sendMessage(msgChannelOpenConfirm, confirm); err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	return nil
+	return c, c.incomingRequests, nil
 }
 
 func (ch *channel) Reject(reason RejectionReason, message string) error {
@@ -462,6 +468,10 @@ func (ch *channel) Extended(code uint32) io.ReadWriter {
 		return nil
 	}
 	return &extChannel{code, ch}
+}
+
+func (ch *channel) Stderr() io.ReadWriter {
+	return ch.Extended(1)
 }
 
 // SendRequest sends a channel request. If wantReply is set, it will
@@ -533,27 +543,4 @@ func (ch *channel) ChannelType() string {
 
 func (ch *channel) ExtraData() []byte {
 	return ch.extraData
-}
-
-// compatChannel is a hack to implement legacy go.crypto/ssh Channel's
-// handing of channel requests.
-type compatChannel struct {
-	*channel
-}
-
-func newCompatChannel(ch *channel) *compatChannel {
-	c := &compatChannel{ch}
-	ch.pending.requestErrors = true
-	go c.loop()
-	return c
-}
-
-func (c *compatChannel) loop() {
-	for r := range c.channel.incomingRequests {
-		c.channel.pending.addRequest(r)
-	}
-}
-
-func (c *compatChannel) Stderr() io.Writer {
-	return c.Extended(1)
 }

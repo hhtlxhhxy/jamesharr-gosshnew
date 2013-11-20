@@ -16,10 +16,6 @@ type buffer struct {
 	// protects concurrent access to head, tail and closed
 	*sync.Cond
 
-	// If set, return ChannelRequests as read errors.
-	requestErrors    bool
-	incomingRequests []*ChannelRequest
-
 	head *element // the buffer that will be read first
 	tail *element // the buffer that will be read last
 
@@ -54,15 +50,6 @@ func (b *buffer) write(buf []byte) {
 	b.Cond.Signal()
 }
 
-// addRequest adds a request to be returned from read(). This is a
-// temporary hack for compatibility with go.crypto/ssh.
-func (b *buffer) addRequest(r *ChannelRequest) {
-	b.Cond.L.Lock()
-	defer b.Cond.L.Unlock()
-	b.incomingRequests = append(b.incomingRequests, r)
-	b.Cond.Broadcast()
-}
-
 // eof closes the buffer. Reads from the buffer once all
 // the data has been consumed will receive os.EOF.
 func (b *buffer) eof() error {
@@ -80,9 +67,9 @@ func (b *buffer) Read(buf []byte) (n int, err error) {
 	b.Cond.L.Lock()
 	defer b.Cond.L.Unlock()
 
-	for {
+	for len(buf) > 0 {
 		// if there is data in b.head, copy it
-		if len(buf) > 0 && len(b.head.buf) > 0 {
+		if len(b.head.buf) > 0 {
 			r := copy(buf, b.head.buf)
 			buf, b.head.buf = buf[r:], b.head.buf[r:]
 			n += r
@@ -93,24 +80,16 @@ func (b *buffer) Read(buf []byte) (n int, err error) {
 			b.head = b.head.next
 			continue
 		}
+
 		// if at least one byte has been copied, return
 		if n > 0 {
 			break
-		}
-
-		if b.requestErrors && len(b.incomingRequests) > 0 {
-			err = *b.incomingRequests[0]
-			b.incomingRequests = b.incomingRequests[1:]
-			return 0, err
 		}
 
 		// if nothing was read, and there is nothing outstanding
 		// check to see if the buffer is closed.
 		if b.closed {
 			err = io.EOF
-			break
-		}
-		if !b.requestErrors && len(buf) == 0 {
 			break
 		}
 		// out of buffers, wait for producer

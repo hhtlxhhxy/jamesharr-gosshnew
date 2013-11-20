@@ -117,13 +117,13 @@ func (c *ClientConn) handleChannelOpens(in chan *channel) {
 	}
 }
 
-func (c *ClientConn) handleChannelOpen(ch *channel) {
-	switch ch.ChannelType() {
+func (c *ClientConn) handleChannelOpen(newCh NewChannel) {
+	switch newCh.ChannelType() {
 	case "forwarded-tcpip":
-		laddr, rest, ok := parseTCPAddr(ch.ExtraData())
+		laddr, rest, ok := parseTCPAddr(newCh.ExtraData())
 		if !ok {
 			// invalid request
-			ch.Reject(ConnectionFailed, "could not parse TCP address")
+			newCh.Reject(ConnectionFailed, "could not parse TCP address")
 			return
 		}
 
@@ -131,22 +131,31 @@ func (c *ClientConn) handleChannelOpen(ch *channel) {
 		if !ok {
 			// Section 7.2, implementations MUST reject spurious incoming
 			// connections.
-			ch.Reject(Prohibited, "no forward for address")
+			newCh.Reject(Prohibited, "no forward for address")
 			return
 		}
 
 		raddr, rest, ok := parseTCPAddr(rest)
 		if !ok {
 			// invalid request
-			ch.Reject(ConnectionFailed, "could not parse TCP address")
+			newCh.Reject(ConnectionFailed, "could not parse TCP address")
 			return
 		}
-		if err := ch.Accept(); err == nil {
+
+		if ch, incoming, err := newCh.Accept(); err == nil {
+			go DiscardIncoming(incoming)
 			l <- forward{ch, raddr}
 		}
 
 	default:
-		ch.Reject(UnknownChannelType, fmt.Sprintf("unknown channel type: %v", ch.ChannelType()))
+		newCh.Reject(UnknownChannelType, fmt.Sprintf("unknown channel type: %v", newCh.ChannelType()))
+	}
+}
+
+// DiscardIncoming rejects all incoming requests.
+func DiscardIncoming(in <-chan *ChannelRequest) {
+	for _ = range in {
+		// TODO(hanwen): respond to WantReply requests.
 	}
 }
 

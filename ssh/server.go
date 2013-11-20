@@ -429,12 +429,12 @@ func (c *sshClientKeyboardInteractive) Challenge(user, instruction string, quest
 
 // Accept reads and processes messages on a ServerConn. It must be called
 // in order to demultiplex messages to any resulting Channels.
-func (s *ServerConn) Accept() (Channel, error) {
+func (s *ServerConn) Accept() (NewChannel, error) {
 	in, ok := <-s.mux.incomingChannels
 	if !ok {
 		return nil, io.EOF
 	}
-	return newCompatChannel(in), nil
+	return in, nil
 }
 
 // A Listener implements a network listener (net.Listener) for SSH connections.
