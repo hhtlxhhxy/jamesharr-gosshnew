@@ -1,11 +1,14 @@
 package ssh
 
 import (
+	"bytes"
 	"crypto/dsa"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -210,5 +213,150 @@ func TestParseDSA(t *testing.T) {
 
 	if !s.PublicKey().Verify(data, sig) {
 		t.Error("Verify failed.")
+	}
+}
+
+// Tests for authorized_keys parsing.
+
+// getTestKey returns a public key, and its base64 encoding.
+func getTestKey() (PublicKey, string) {
+	k := rsaKey.PublicKey()
+
+	b := &bytes.Buffer{}
+	e := base64.NewEncoder(base64.StdEncoding, b)
+	e.Write(MarshalPublicKey(k))
+	e.Close()
+
+	return k, b.String()
+}
+
+func TestMarshalParsePublicKey(t *testing.T) {
+	pub, pubSerialized := getTestKey()
+	line := fmt.Sprintf("%s %s user@host", pub.PublicKeyAlgo(), pubSerialized)
+
+	authKeys := MarshalAuthorizedKey(pub)
+	actualFields := strings.Fields(string(authKeys))
+	if len(actualFields) == 0 {
+		t.Fatalf("failed authKeys: %v", authKeys)
+	}
+
+	// drop the comment
+	expectedFields := strings.Fields(line)[0:2]
+
+	if !reflect.DeepEqual(actualFields, expectedFields) {
+		t.Errorf("got %v, expected %v", actualFields, expectedFields)
+	}
+
+	actPub, _, _, _, ok := ParseAuthorizedKey([]byte(line))
+	if !ok {
+		t.Fatalf("cannot parse %v", line)
+	}
+	if !reflect.DeepEqual(actPub, pub) {
+		t.Errorf("got %v, expected %v", actPub, pub)
+	}
+}
+
+type authResult struct {
+	pubKey   PublicKey
+	options  []string
+	comments string
+	rest     string
+	ok       bool
+}
+
+func testAuthorizedKeys(t *testing.T, authKeys []byte, expected []authResult) {
+	rest := authKeys
+	var values []authResult
+	for len(rest) > 0 {
+		var r authResult
+		r.pubKey, r.comments, r.options, rest, r.ok = ParseAuthorizedKey(rest)
+		r.rest = string(rest)
+		values = append(values, r)
+	}
+
+	if !reflect.DeepEqual(values, expected) {
+		t.Errorf("got %v, expected %v", values, expected)
+	}
+
+}
+
+func TestAuth(t *testing.T) {
+	pub, pubSerialized := getTestKey()
+	authWithOptions := []string{
+		`# comments to ignore before any keys...`,
+		``,
+		`env="HOME=/home/root",no-port-forwarding ssh-rsa ` + pubSerialized + ` user@host`,
+		`# comments to ignore, along with a blank line`,
+		``,
+		`env="HOME=/home/root2" ssh-rsa ` + pubSerialized + ` user2@host2`,
+		``,
+		`# more comments, plus a invalid entry`,
+		`ssh-rsa data-that-will-not-parse user@host3`,
+	}
+	for _, eol := range []string{"\n", "\r\n"} {
+		authOptions := strings.Join(authWithOptions, eol)
+		rest2 := strings.Join(authWithOptions[3:], eol)
+		rest3 := strings.Join(authWithOptions[6:], eol)
+		testAuthorizedKeys(t, []byte(authOptions), []authResult{
+			{pub, []string{`env="HOME=/home/root"`, "no-port-forwarding"}, "user@host", rest2, true},
+			{pub, []string{`env="HOME=/home/root2"`}, "user2@host2", rest3, true},
+			{nil, nil, "", "", false},
+		})
+	}
+}
+
+func TestAuthWithQuotedSpaceInEnv(t *testing.T) {
+	pub, pubSerialized := getTestKey()
+	authWithQuotedSpaceInEnv := []byte(`env="HOME=/home/root dir",no-port-forwarding ssh-rsa ` + pubSerialized + ` user@host`)
+	testAuthorizedKeys(t, []byte(authWithQuotedSpaceInEnv), []authResult{
+		{pub, []string{`env="HOME=/home/root dir"`, "no-port-forwarding"}, "user@host", "", true},
+	})
+}
+
+func TestAuthWithQuotedCommaInEnv(t *testing.T) {
+	pub, pubSerialized := getTestKey()
+	authWithQuotedCommaInEnv := []byte(`env="HOME=/home/root,dir",no-port-forwarding ssh-rsa ` + pubSerialized + `   user@host`)
+	testAuthorizedKeys(t, []byte(authWithQuotedCommaInEnv), []authResult{
+		{pub, []string{`env="HOME=/home/root,dir"`, "no-port-forwarding"}, "user@host", "", true},
+	})
+}
+
+func TestAuthWithQuotedQuoteInEnv(t *testing.T) {
+	pub, pubSerialized := getTestKey()
+	authWithQuotedQuoteInEnv := []byte(`env="HOME=/home/\"root dir",no-port-forwarding` + "\t" + `ssh-rsa` + "\t" + pubSerialized + `   user@host`)
+	authWithDoubleQuotedQuote := []byte(`no-port-forwarding,env="HOME=/home/ \"root dir\"" ssh-rsa ` + pubSerialized + "\t" + `user@host`)
+	testAuthorizedKeys(t, []byte(authWithQuotedQuoteInEnv), []authResult{
+		{pub, []string{`env="HOME=/home/\"root dir"`, "no-port-forwarding"}, "user@host", "", true},
+	})
+
+	testAuthorizedKeys(t, []byte(authWithDoubleQuotedQuote), []authResult{
+		{pub, []string{"no-port-forwarding", `env="HOME=/home/ \"root dir\""`}, "user@host", "", true},
+	})
+}
+
+func TestAuthWithInvalidSpace(t *testing.T) {
+	_, pubSerialized := getTestKey()
+	authWithInvalidSpace := []byte(`env="HOME=/home/root dir", no-port-forwarding ssh-rsa ` + pubSerialized + ` user@host
+#more to follow but still no valid keys`)
+	testAuthorizedKeys(t, []byte(authWithInvalidSpace), []authResult{
+		{nil, nil, "", "", false},
+	})
+}
+
+func TestAuthWithMissingQuote(t *testing.T) {
+	pub, pubSerialized := getTestKey()
+	authWithMissingQuote := []byte(`env="HOME=/home/root,no-port-forwarding ssh-rsa ` + pubSerialized + ` user@host
+env="HOME=/home/root",shared-control ssh-rsa ` + pubSerialized + ` user@host`)
+
+	testAuthorizedKeys(t, []byte(authWithMissingQuote), []authResult{
+		{pub, []string{`env="HOME=/home/root"`, `shared-control`}, "user@host", "", true},
+	})
+}
+
+func TestInvalidEntry(t *testing.T) {
+	authInvalid := []byte(`ssh-rsa`)
+	_, _, _, _, ok := ParseAuthorizedKey(authInvalid)
+	if ok {
+		t.Errorf("Expected invalid entry, returned valid entry")
 	}
 }
