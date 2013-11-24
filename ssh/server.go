@@ -183,9 +183,7 @@ func isAcceptableAlgo(algo string) bool {
 
 func (s *ServerConn) handleGlobalRequests() {
 	for r := range s.mux.incomingRequests {
-		if r.WantReply {
-			s.mux.AckRequest(false, nil)
-		}
+		r.Reply(false, nil)
 	}
 }
 

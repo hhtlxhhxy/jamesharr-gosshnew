@@ -46,10 +46,10 @@ func (ss *ServerTerminal) Write(buf []byte) (n int, err error) {
 	return ss.Term.Write(buf)
 }
 
-func (ss *ServerTerminal) HandleRequests(in <-chan *ChannelRequest) {
+func (ss *ServerTerminal) HandleRequests(in <-chan *Request) {
 	for req := range in {
 		ok := false
-		switch req.Request {
+		switch req.Type {
 		case "pty-req":
 			var width, height int
 			width, height, ok = parsePtyRequest(req.Payload)
@@ -63,9 +63,7 @@ func (ss *ServerTerminal) HandleRequests(in <-chan *ChannelRequest) {
 		case "env":
 			ok = true
 		}
-		if req.WantReply {
-			ss.Channel.AckRequest(ok)
-		}
+		req.Reply(ok, nil)
 	}
 }
 

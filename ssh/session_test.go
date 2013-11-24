@@ -491,9 +491,7 @@ func fixedOutputHandler(ch *channel, t *testing.T) {
 	}
 
 	// ignore request, always send some text
-	if req.WantReply {
-		ch.AckRequest(true)
-	}
+	req.Reply(true, nil)
 
 	_, err = io.WriteString(ch, "this-is-stdout.")
 	if err != nil {

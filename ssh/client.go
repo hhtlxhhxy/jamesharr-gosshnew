@@ -100,13 +100,11 @@ func verifyHostKeySignature(hostKeyAlgo string, result *kexResult) error {
 	return nil
 }
 
-func (c *ClientConn) handleGlobalRequests(incoming chan *ChannelRequest) {
+func (c *ClientConn) handleGlobalRequests(incoming chan *Request) {
 	for r := range incoming {
-		if r.WantReply {
-			// This handles keepalive messages and matches
-			// the behaviour of OpenSSH.
-			c.mux.AckRequest(false, nil)
-		}
+		// This handles keepalive messages and matches
+		// the behaviour of OpenSSH.
+		r.Reply(false, nil)
 	}
 }
 
@@ -153,7 +151,7 @@ func (c *ClientConn) handleChannelOpen(newCh NewChannel) {
 }
 
 // DiscardIncoming rejects all incoming requests.
-func DiscardIncoming(in <-chan *ChannelRequest) {
+func DiscardIncoming(in <-chan *Request) {
 	for _ = range in {
 		// TODO(hanwen): respond to WantReply requests.
 	}

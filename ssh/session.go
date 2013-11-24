@@ -380,7 +380,7 @@ func (s *Session) wait() error {
 
 	// Wait for msg channel to be closed before returning.
 	for msg := range s.ch.incomingRequests {
-		switch msg.Request {
+		switch msg.Type {
 		case "exit-status":
 			d := msg.Payload
 			wm.status = int(d[0])<<24 | int(d[1])<<16 | int(d[2])<<8 | int(d[3])
@@ -412,7 +412,7 @@ func (s *Session) wait() error {
 			// This handles keepalives and matches
 			// OpenSSH's behaviour.
 			if msg.WantReply {
-				s.ch.AckRequest(false)
+				msg.Reply(false, nil)
 			}
 		}
 	}

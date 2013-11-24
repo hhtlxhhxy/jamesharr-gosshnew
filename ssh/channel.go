@@ -21,13 +21,13 @@ const (
 	channelWindowSize = 64 * channelMaxPacket
 )
 
-// NewChannel is a new incoming channel. It must either be accepted
-// for use with the Accept method or rejected with Reject.
+// NewChannel is an incoming request to a channel. It must either be
+// accepted for use with the Accept method or rejected with Reject.
 type NewChannel interface {
-	// Accept accepts the channel creation request. Returns the
-	// channel and the side-channel for requests. The channel must
-	// be serviced.
-	Accept() (Channel, <-chan *ChannelRequest, error)
+	// Accept accepts the channel creation request. It returns the
+	// Channel and the side-channel for requests. The side-channel
+	// must be serviced.
+	Accept() (Channel, <-chan *Request, error)
 
 	// Reject rejects the channel creation request. After calling
 	// this, no other methods on the Channel may be called.
@@ -45,7 +45,6 @@ type NewChannel interface {
 // A Channel is an ordered, reliable, duplex stream that is
 // multiplexed over an SSH connection.
 type Channel interface {
-	// Read may return a ChannelRequest as an error.
 	Read(data []byte) (int, error)
 	Write(data []byte) (int, error)
 
@@ -57,11 +56,6 @@ type Channel interface {
 	// extended data type set to stderr.
 	Stderr() io.ReadWriter
 
-	// AckRequest either sends an ack or nack to the channel
-	// request. It should only be called if the last
-	// ChannelRequest had a WantReply
-	AckRequest(ok bool) error
-
 	// ChannelType returns the type of the channel, as supplied by the
 	// client.
 	ChannelType() string
@@ -71,12 +65,31 @@ type Channel interface {
 	ExtraData() []byte
 }
 
-// ChannelRequest is a request sent outside of the normal stream of
-// bytes.
-type ChannelRequest struct {
-	Request   string
+// Request is a request sent outside of the normal stream of
+// data. Requests can either be specific to an SSH channel, or they
+// can be global.
+type Request struct {
+	Type      string
 	WantReply bool
 	Payload   []byte
+
+	ch  *channel
+	mux *mux
+}
+
+// Reply sends a message back to the request.  It should be called for
+// all requests that have WantReply set.  The payload argument is
+// ignored for channel specific requests
+func (r *Request) Reply(ok bool, payload []byte) error {
+	if !r.WantReply {
+		return errors.New("ssh: request did not have WantReply")
+	}
+
+	if r.ch == nil {
+		return r.mux.ackRequest(ok, payload)
+	}
+
+	return r.ch.ackRequest(ok)
 }
 
 // RejectionReason is an enumeration used when rejecting channel creation
@@ -137,7 +150,7 @@ type channel struct {
 	// goroutine that has such an outgoing request pending.
 	sentRequestMu sync.Mutex
 
-	incomingRequests chan *ChannelRequest
+	incomingRequests chan *Request
 
 	sentEOF bool
 
@@ -353,10 +366,11 @@ func (c *channel) handlePacket(packet []byte) error {
 			return fmt.Errorf("invalid window update %d", msg.AdditionalBytes)
 		}
 	case *channelRequestMsg:
-		req := ChannelRequest{
-			Request:   msg.Request,
+		req := Request{
+			Type:      msg.Request,
 			WantReply: msg.WantReply,
 			Payload:   msg.RequestSpecificData,
+			ch:        c,
 		}
 
 		c.incomingRequests <- &req
@@ -372,7 +386,7 @@ func (m *mux) newChannel(chanType string, extraData []byte) *channel {
 		myWindow:         channelWindowSize,
 		pending:          newBuffer(),
 		extPending:       newBuffer(),
-		incomingRequests: make(chan *ChannelRequest, 16),
+		incomingRequests: make(chan *Request, 16),
 		msg:              make(chan interface{}, 16),
 		chanType:         chanType,
 		extraData:        extraData,
@@ -399,7 +413,7 @@ func (e *extChannel) Read(data []byte) (n int, err error) {
 	return e.ch.ReadExtended(data, e.code)
 }
 
-func (c *channel) Accept() (Channel, <-chan *ChannelRequest, error) {
+func (c *channel) Accept() (Channel, <-chan *Request, error) {
 	if c.decided {
 		return nil, nil, errDecidedAlready
 	}
@@ -515,8 +529,8 @@ func (ch *channel) SendRequest(name string, wantReply bool, payload []byte) (boo
 	return false, nil
 }
 
-// AckRequest either sends an ack or nack to the channel request.
-func (ch *channel) AckRequest(ok bool) error {
+// ackRequest either sends an ack or nack to the channel request.
+func (ch *channel) ackRequest(ok bool) error {
 	if !ch.decided {
 		return errUndecided
 	}

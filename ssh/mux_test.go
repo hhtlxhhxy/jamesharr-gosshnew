@@ -217,9 +217,7 @@ func TestMuxChannelRequest(t *testing.T) {
 	go func() {
 		for r := range server.incomingRequests {
 			received++
-			if r.WantReply {
-				server.AckRequest(r.Request == "yes")
-			}
+			r.Reply(r.Type == "yes", nil)
 		}
 		wg.Done()
 	}()
@@ -262,10 +260,10 @@ func TestMuxGlobalRequest(t *testing.T) {
 	var seen bool
 	go func() {
 		for r := range serverMux.incomingRequests {
-			seen = seen || r.Request == "peek"
+			seen = seen || r.Type == "peek"
 			if r.WantReply {
-				err := serverMux.AckRequest(r.Request == "yes",
-					append([]byte(r.Request), r.Payload...))
+				err := r.Reply(r.Type == "yes",
+					append([]byte(r.Type), r.Payload...))
 				if err != nil {
 					t.Errorf("AckRequest: %v", err)
 				}
@@ -347,9 +345,7 @@ func TestMuxDisconnect(t *testing.T) {
 
 	go func() {
 		for r := range b.incomingRequests {
-			if r.WantReply {
-				b.AckRequest(true, nil)
-			}
+			r.Reply(true, nil)
 		}
 	}()
 

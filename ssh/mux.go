@@ -93,7 +93,7 @@ type mux struct {
 
 	globalSentMu     sync.Mutex
 	globalResponses  chan interface{}
-	incomingRequests chan *ChannelRequest
+	incomingRequests chan *Request
 }
 
 // Each new chanList instantiation has a different offset.
@@ -106,7 +106,7 @@ func newMux(p packetConn) *mux {
 		conn:             p,
 		incomingChannels: make(chan *channel, 16),
 		globalResponses:  make(chan interface{}, 1),
-		incomingRequests: make(chan *ChannelRequest, 16),
+		incomingRequests: make(chan *Request, 16),
 	}
 	m.chanList.offset = atomic.AddUint32(&globalOff, 1)
 	return m
@@ -152,9 +152,9 @@ func (m *mux) SendRequest(name string, wantReply bool, payload []byte) (bool, []
 	return false, nil, nil
 }
 
-// AckRequest must be called after processing a global request that
+// ackRequest must be called after processing a global request that
 // has WantReply set.
-func (m *mux) AckRequest(ok bool, data []byte) error {
+func (m *mux) ackRequest(ok bool, data []byte) error {
 	if ok {
 		return m.sendMessage(msgRequestSuccess,
 			globalRequestSuccessMsg{Data: data})
@@ -275,10 +275,11 @@ func (m *mux) handleGlobalPacket(packet []byte) error {
 
 	switch msg := msg.(type) {
 	case *globalRequestMsg:
-		m.incomingRequests <- &ChannelRequest{
-			msg.Type,
-			msg.WantReply,
-			msg.Data,
+		m.incomingRequests <- &Request{
+			Type:      msg.Type,
+			WantReply: msg.WantReply,
+			Payload:   msg.Data,
+			mux:       m,
 		}
 	case *globalRequestSuccessMsg, *globalRequestFailureMsg:
 		m.globalResponses <- msg
