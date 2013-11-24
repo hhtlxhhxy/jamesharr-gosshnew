@@ -14,7 +14,7 @@ import (
 type ClientConn struct {
 	sshConn
 	transport   rekeyingTransport
-	config      ClientConfig
+	config      *ClientConfig
 	forwardList // forwarded tcpip connections from the remote side
 
 	// Address as passed to the Dial function.
@@ -29,12 +29,13 @@ func Client(c net.Conn, config *ClientConfig) (*ClientConn, error) {
 }
 
 func clientWithAddress(c net.Conn, addr string, config *ClientConfig) (*ClientConn, error) {
+	fullConf := *config
+	fullConf.setDefaults()
 	conn := &ClientConn{
 		sshConn:     sshConn{conn: c},
-		config:      *config,
+		config:      &fullConf,
 		dialAddress: addr,
 	}
-	conn.config.setDefaults()
 
 	if err := conn.handshake(); err != nil {
 		c.Close()
@@ -65,7 +66,7 @@ func (c *ClientConn) handshake() error {
 
 	c.transport = newClientTransport(
 		newTransport(c.sshConn.conn, c.config.Rand, true /* is client */),
-		c.clientVersion, c.serverVersion, &c.config, c.dialAddress, c.sshConn.RemoteAddr())
+		c.clientVersion, c.serverVersion, c.config, c.dialAddress, c.sshConn.RemoteAddr())
 	if err := c.transport.requestKeyChange(); err != nil {
 		return err
 	}
