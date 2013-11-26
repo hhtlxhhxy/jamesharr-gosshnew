@@ -7,7 +7,9 @@ package ssh
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
+	"math/big"
 	"sync"
 )
 
@@ -247,4 +249,41 @@ func unmarshalAgentMsg(packet []byte) (interface{}, uint8, error) {
 		return nil, 0, err
 	}
 	return msg, packet[0], nil
+}
+
+type rsaKeyMsg struct {
+	Type     string
+	N        *big.Int
+	E        *big.Int
+	D        *big.Int
+	Iqmp     *big.Int // IQMP = Inverse Q Mod P
+	P        *big.Int
+	Q        *big.Int
+	Comments string
+}
+
+func (ac *AgentClient) insert(s Signer, comment string) error {
+	switch k := s.(type) {
+	case *rsaPrivateKey:
+		req := marshal(agentAddIdentity,
+			rsaKeyMsg{
+				Type:     KeyAlgoRSA,
+				N:        k.N,
+				E:        big.NewInt(int64(k.E)),
+				D:        k.D,
+				Iqmp:     k.Precomputed.Qinv,
+				P:        k.Primes[0],
+				Q:        k.Primes[1],
+				Comments: comment,
+			})
+		_, msgType, err := ac.sendAndReceive(req)
+		if err != nil {
+			return err
+		}
+		if msgType == agentSuccess {
+			return nil
+		}
+		return errors.New("ssh: failure")
+	}
+	return fmt.Errorf("ssh: unsupported key type %T", s)
 }
