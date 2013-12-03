@@ -11,7 +11,6 @@ package test
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -276,15 +275,8 @@ type keychain struct {
 	keys []ssh.Signer
 }
 
-func (k *keychain) Key(i int) (ssh.PublicKey, error) {
-	if i < 0 || i >= len(k.keys) {
-		return nil, nil
-	}
-	return k.keys[i].PublicKey(), nil
-}
-
-func (k *keychain) Sign(i int, rand io.Reader, data []byte) (sig []byte, err error) {
-	return k.keys[i].Sign(rand, data)
+func (k *keychain) Signers() ([]ssh.Signer, error) {
+	return k.keys, nil
 }
 
 func (k *keychain) loadPEM(file string) error {

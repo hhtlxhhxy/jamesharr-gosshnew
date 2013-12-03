@@ -156,12 +156,7 @@ func ClientAuthPassword(impl ClientPassword) ClientAuth {
 
 // ClientKeyring implements access to a client key ring.
 type ClientKeyring interface {
-	// Key returns the i'th Publickey, or nil if no key exists at i.
-	Key(i int) (key PublicKey, err error)
-
-	// Sign returns a signature of the given data using the i'th key
-	// and the supplied random source.
-	Sign(i int, rand io.Reader, data []byte) (sig []byte, err error)
+	Signers() ([]Signer, error)
 }
 
 // "publickey" authentication, RFC 4252 Section 7.
@@ -188,35 +183,30 @@ func (p *publickeyAuth) auth(session []byte, user string, c packetConn, rand io.
 	// stage attempts to authenticate with the valid keys obtained in the
 	// first stage.
 
-	var index int
 	// a map of public keys to their index in the keyring
-	validKeys := make(map[int]PublicKey)
-	for {
-		key, err := p.Key(index)
-		if err != nil {
-			return false, nil, err
-		}
-		if key == nil {
-			// no more keys in the keyring
-			break
-		}
-
-		if ok, err := p.validateKey(key, user, c); ok {
-			validKeys[index] = key
+	signers, err := p.Signers()
+	if err != nil {
+		return false, nil, err
+	}
+	var validKeys []Signer
+	for _, signer := range signers {
+		if ok, err := p.validateKey(signer.PublicKey(), user, c); ok {
+			validKeys = append(validKeys, signer)
 		} else {
 			if err != nil {
 				return false, nil, err
 			}
 		}
-		index++
 	}
 
 	// methods that may continue if this auth is not successful.
 	var methods []string
-	for i, key := range validKeys {
-		pubkey := MarshalPublicKey(key)
-		algoname := key.PublicKeyAlgo()
-		sign, err := p.Sign(i, rand, buildDataSignedForAuth(session, userAuthRequestMsg{
+	for _, signer := range validKeys {
+		pub := signer.PublicKey()
+
+		pubkey := MarshalPublicKey(pub)
+		algoname := pub.PublicKeyAlgo()
+		sign, err := signer.Sign(rand, buildDataSignedForAuth(session, userAuthRequestMsg{
 			User:    user,
 			Service: serviceSSH,
 			Method:  p.method(),
@@ -224,8 +214,9 @@ func (p *publickeyAuth) auth(session []byte, user string, c packetConn, rand io.
 		if err != nil {
 			return false, nil, err
 		}
+
 		// manually wrap the serialized signature in a string
-		s := serializeSignature(key.PublicKeyAlgo(), sign)
+		s := serializeSignature(algoname, sign)
 		sig := make([]byte, stringLength(len(s)))
 		marshalString(sig, s)
 		msg := publickeyAuthMsg{
@@ -349,43 +340,38 @@ func ClientAuthAgent(agent *AgentClient) ClientAuth {
 // agentKeyring implements ClientKeyring.
 type agentKeyring struct {
 	agent *AgentClient
-	keys  []*AgentKey
 }
 
-func (kr *agentKeyring) Key(i int) (key PublicKey, err error) {
-	if kr.keys == nil {
-		if kr.keys, err = kr.agent.RequestIdentities(); err != nil {
-			return
+type agentKeyringSigner struct {
+	agent *AgentClient
+	pub   PublicKey
+}
+
+func (s *agentKeyringSigner) PublicKey() PublicKey {
+	return s.pub
+}
+
+func (s *agentKeyringSigner) Sign(rand io.Reader, data []byte) ([]byte, error) {
+	// The agent has its own entropy source, so the rand argument is ignored.
+	return s.agent.SignRequest(s.pub, data)
+}
+
+func (kr *agentKeyring) Signers() ([]Signer, error) {
+	keys, err := kr.agent.RequestIdentities()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []Signer
+	for _, k := range keys {
+		pub, err := k.Key()
+		if err != nil {
+			// TODO(hanwen): revise this? should never make it into an AgentKey?
+			continue
 		}
+		result = append(result, &agentKeyringSigner{kr.agent, pub})
 	}
-	if i >= len(kr.keys) {
-		return
-	}
-	return kr.keys[i].Key()
-}
-
-func (kr *agentKeyring) Sign(i int, rand io.Reader, data []byte) (sig []byte, err error) {
-	var key PublicKey
-	if key, err = kr.Key(i); err != nil {
-		return
-	}
-	if key == nil {
-		return nil, errors.New("ssh: key index out of range")
-	}
-	if sig, err = kr.agent.SignRequest(key, data); err != nil {
-		return
-	}
-
-	// Unmarshal the signature.
-
-	var ok bool
-	if _, sig, ok = parseString(sig); !ok {
-		return nil, errors.New("ssh: malformed signature response from agent")
-	}
-	if sig, _, ok = parseString(sig); !ok {
-		return nil, errors.New("ssh: malformed signature response from agent")
-	}
-	return sig, nil
+	return result, nil
 }
 
 // ClientKeyboardInteractive should prompt the user for the given

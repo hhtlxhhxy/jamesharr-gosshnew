@@ -7,7 +7,6 @@ package ssh
 import (
 	"bytes"
 	"crypto/dsa"
-	"io"
 	"io/ioutil"
 	"math/big"
 	"strings"
@@ -60,16 +59,8 @@ type keychain struct {
 	keys []Signer
 }
 
-func (k *keychain) Key(i int) (PublicKey, error) {
-	if i < 0 || i >= len(k.keys) {
-		return nil, nil
-	}
-
-	return k.keys[i].PublicKey(), nil
-}
-
-func (k *keychain) Sign(i int, rand io.Reader, data []byte) (sig []byte, err error) {
-	return k.keys[i].Sign(rand, data)
+func (k *keychain) Signers() ([]Signer, error) {
+	return k.keys, nil
 }
 
 func (k *keychain) add(key Signer) {
@@ -117,7 +108,11 @@ var (
 			return conn.User() == "testuser" && string(pass) == string(clientPassword)
 		},
 		PublicKeyCallback: func(conn ConnMetadata, algo string, pubkey []byte) bool {
-			key, _ := clientKeychain.Key(0)
+			ids, err := clientKeychain.Signers()
+			if err != nil {
+				return false
+			}
+			key := ids[0].PublicKey()
 			expected := MarshalPublicKey(key)
 			algoname := key.PublicKeyAlgo()
 			return conn.User() == "testuser" && algo == algoname && bytes.Equal(pubkey, expected)
