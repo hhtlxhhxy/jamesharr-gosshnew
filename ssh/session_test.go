@@ -18,7 +18,7 @@ import (
 	"code.google.com/p/gosshnew/ssh/terminal"
 )
 
-type serverType func(*channel, *testing.T)
+type serverType func(Channel, <-chan *Request, *testing.T)
 
 // dial constructs a new test server and returns a *ClientConn.
 func dial(handler serverType, t *testing.T) *ClientConn {
@@ -58,13 +58,13 @@ func dial(handler serverType, t *testing.T) *ClientConn {
 				continue
 			}
 
-			ch, _, err := newCh.Accept()
+			ch, inReqs, err := newCh.Accept()
 			if err != nil {
 				t.Errorf("Accept: %v", err)
 			}
 			go func() {
 				defer close(done)
-				handler(ch.(*channel), t)
+				handler(ch, inReqs, t)
 			}()
 		}
 		<-done
@@ -417,74 +417,74 @@ type exitSignalMsg struct {
 	Lang       string
 }
 
-func newServerShell(ch *channel, prompt string) *ServerTerminal {
+func newServerShell(ch Channel, in <-chan *Request, prompt string) *ServerTerminal {
 	term := terminal.NewTerminal(ch, prompt)
 	s := &ServerTerminal{
 		Term:    term,
 		Channel: ch,
 	}
-	go s.HandleRequests(ch.incomingRequests)
+	go s.HandleRequests(in)
 	return s
 }
 
-func exitStatusZeroHandler(ch *channel, t *testing.T) {
+func exitStatusZeroHandler(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
 	// this string is returned to stdout
-	shell := newServerShell(ch, "> ")
+	shell := newServerShell(ch, in, "> ")
 	readLine(shell, t)
 	sendStatus(0, ch, t)
 }
 
-func exitStatusNonZeroHandler(ch *channel, t *testing.T) {
+func exitStatusNonZeroHandler(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
-	shell := newServerShell(ch, "> ")
+	shell := newServerShell(ch, in, "> ")
 	readLine(shell, t)
 	sendStatus(15, ch, t)
 }
 
-func exitSignalAndStatusHandler(ch *channel, t *testing.T) {
+func exitSignalAndStatusHandler(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
-	shell := newServerShell(ch, "> ")
+	shell := newServerShell(ch, in, "> ")
 	readLine(shell, t)
 	sendStatus(15, ch, t)
 	sendSignal("TERM", ch, t)
 }
 
-func exitSignalHandler(ch *channel, t *testing.T) {
+func exitSignalHandler(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
-	shell := newServerShell(ch, "> ")
+	shell := newServerShell(ch, in, "> ")
 	readLine(shell, t)
 	sendSignal("TERM", ch, t)
 }
 
-func exitSignalUnknownHandler(ch *channel, t *testing.T) {
+func exitSignalUnknownHandler(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
-	shell := newServerShell(ch, "> ")
+	shell := newServerShell(ch, in, "> ")
 	readLine(shell, t)
 	sendSignal("SYS", ch, t)
 }
 
-func exitWithoutSignalOrStatus(ch *channel, t *testing.T) {
+func exitWithoutSignalOrStatus(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
-	shell := newServerShell(ch, "> ")
+	shell := newServerShell(ch, in, "> ")
 	readLine(shell, t)
 }
 
-func shellHandler(ch *channel, t *testing.T) {
+func shellHandler(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
 	// this string is returned to stdout
-	shell := newServerShell(ch, "golang")
+	shell := newServerShell(ch, in, "golang")
 	readLine(shell, t)
 	sendStatus(0, ch, t)
 }
 
 // Ignores the command, writes fixed strings to stderr and stdout.
 // Strings are "this-is-stdout." and "this-is-stderr.".
-func fixedOutputHandler(ch *channel, t *testing.T) {
+func fixedOutputHandler(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
 	_, err := ch.Read(nil)
 
-	req, ok := <-ch.incomingRequests
+	req, ok := <-in
 	if !ok {
 		t.Fatalf("error: expected channel request, got: %#v", err)
 		return
@@ -497,7 +497,7 @@ func fixedOutputHandler(ch *channel, t *testing.T) {
 	if err != nil {
 		t.Fatalf("error writing on server: %v", err)
 	}
-	_, err = io.WriteString(ch.Extended(1), "this-is-stderr.")
+	_, err = io.WriteString(ch.Stderr(), "this-is-stderr.")
 	if err != nil {
 		t.Fatalf("error writing on server: %v", err)
 	}
@@ -510,7 +510,7 @@ func readLine(shell *ServerTerminal, t *testing.T) {
 	}
 }
 
-func sendStatus(status uint32, ch *channel, t *testing.T) {
+func sendStatus(status uint32, ch Channel, t *testing.T) {
 	msg := exitStatusMsg{
 		Status: status,
 	}
@@ -519,7 +519,7 @@ func sendStatus(status uint32, ch *channel, t *testing.T) {
 	}
 }
 
-func sendSignal(signal string, ch *channel, t *testing.T) {
+func sendSignal(signal string, ch Channel, t *testing.T) {
 	sig := exitSignalMsg{
 		Signal:     signal,
 		CoreDumped: false,
@@ -531,12 +531,12 @@ func sendSignal(signal string, ch *channel, t *testing.T) {
 	}
 }
 
-func discardHandler(ch *channel, t *testing.T) {
+func discardHandler(ch Channel, t *testing.T) {
 	defer ch.Close()
 	io.Copy(ioutil.Discard, ch)
 }
 
-func echoHandler(ch *channel, t *testing.T) {
+func echoHandler(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
 	if n, err := copyNRandomly("echohandler", ch, ch, windowTestBytes); err != nil {
 		t.Errorf("short write, wrote %d, expected %d: %v ", n, windowTestBytes, err)
@@ -573,9 +573,9 @@ func copyNRandomly(title string, dst io.Writer, src io.Reader, n int) (int, erro
 	return written, nil
 }
 
-func channelKeepaliveSender(ch *channel, t *testing.T) {
+func channelKeepaliveSender(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
-	shell := newServerShell(ch, "> ")
+	shell := newServerShell(ch, in, "> ")
 	readLine(shell, t)
 	if _, err := ch.SendRequest("keepalive@openssh.com", true, nil); err != nil {
 		t.Errorf("unable to send channel keepalive request: %v", err)
@@ -618,7 +618,7 @@ func TestClientWriteEOF(t *testing.T) {
 	}
 }
 
-func simpleEchoHandler(ch *channel, t *testing.T) {
+func simpleEchoHandler(ch Channel, in <-chan *Request, t *testing.T) {
 	defer ch.Close()
 	data, err := ioutil.ReadAll(ch)
 	if err != nil {

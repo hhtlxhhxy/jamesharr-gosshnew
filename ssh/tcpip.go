@@ -284,18 +284,21 @@ type channelOpenDirectMsg struct {
 	lport uint32
 }
 
-func (c *ClientConn) dial(laddr string, lport int, raddr string, rport int) (*channel, error) {
+func (c *ClientConn) dial(laddr string, lport int, raddr string, rport int) (Channel, error) {
 	msg := channelOpenDirectMsg{
 		raddr: raddr,
 		rport: uint32(rport),
 		laddr: laddr,
 		lport: uint32(lport),
 	}
-	return c.mux.OpenChannel("direct-tcpip", marshalBare(msg))
+
+	ch, err := c.mux.OpenChannel("direct-tcpip", marshalBare(msg))
+	go DiscardIncoming(ch.incomingRequests)
+	return ch, err
 }
 
 type tcpChan struct {
-	*channel // the backing channel
+	Channel // the backing channel
 }
 
 // tcpChanConn fulfills the net.Conn interface without

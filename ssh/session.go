@@ -129,11 +129,11 @@ type Session struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
-	ch *channel // the channel backing this session
-
-	started   bool // true once Start, Run or Shell is invoked.
-	copyFuncs []func() error
-	errors    chan error // one send per copyFunc
+	ch               Channel // the channel backing this session
+	incomingRequests <-chan *Request
+	started          bool // true once Start, Run or Shell is invoked.
+	copyFuncs        []func() error
+	errors           chan error // one send per copyFunc
 
 	// true if pipe method is active
 	stdinpipe, stdoutpipe, stderrpipe bool
@@ -379,7 +379,7 @@ func (s *Session) wait() error {
 	wm := Waitmsg{status: -1}
 
 	// Wait for msg channel to be closed before returning.
-	for msg := range s.ch.incomingRequests {
+	for msg := range s.incomingRequests {
 		switch msg.Type {
 		case "exit-status":
 			d := msg.Payload
@@ -469,7 +469,7 @@ func (s *Session) stderr() {
 		s.Stderr = ioutil.Discard
 	}
 	s.copyFuncs = append(s.copyFuncs, func() error {
-		_, err := io.Copy(s.Stderr, s.ch.Extended(1))
+		_, err := io.Copy(s.Stderr, s.ch.Stderr())
 		return err
 	})
 }
@@ -477,7 +477,7 @@ func (s *Session) stderr() {
 // sessionStdin reroutes Close to CloseWrite.
 type sessionStdin struct {
 	io.Writer
-	ch *channel
+	ch Channel
 }
 
 func (s *sessionStdin) Close() error {
@@ -528,7 +528,7 @@ func (s *Session) StderrPipe() (io.Reader, error) {
 		return nil, errors.New("ssh: StderrPipe after process started")
 	}
 	s.stderrpipe = true
-	return s.ch.Extended(1), nil
+	return s.ch.Stderr(), nil
 }
 
 // NewSession returns a new interactive session on the remote host.
@@ -539,7 +539,8 @@ func (c *ClientConn) NewSession() (*Session, error) {
 	}
 
 	return &Session{
-		ch: ch,
+		ch:               ch,
+		incomingRequests: ch.incomingRequests,
 	}, nil
 }
 

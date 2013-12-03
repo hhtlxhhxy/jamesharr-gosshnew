@@ -52,6 +52,18 @@ type Channel interface {
 	// call.
 	Close() error
 
+	// CloseWrite signals the end of sending in-band
+	// data. Requests may still be sent, and the other side may
+	// still send data
+	CloseWrite() error
+
+	// SendRequest sends a channel request.  If wantReply is true,
+	// it will wait for a reply and return the result as a
+	// boolean, otherwise the return value will be false. Channel
+	// requests are out-of-band messages, so they may be sent even
+	// if the data stream is closed or blocked by flow control.
+	SendRequest(name string, wantReply bool, payload []byte) (bool, error)
+
 	// Stderr returns an io.ReadWriter that writes to this channel with the
 	// extended data type set to stderr.
 	Stderr() io.ReadWriter
@@ -488,8 +500,6 @@ func (ch *channel) Stderr() io.ReadWriter {
 	return ch.Extended(1)
 }
 
-// SendRequest sends a channel request. If wantReply is set, it will
-// wait for a reply and return the result as a boolean.
 func (ch *channel) SendRequest(name string, wantReply bool, payload []byte) (bool, error) {
 	if !ch.decided {
 		return false, errUndecided
