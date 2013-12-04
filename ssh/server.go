@@ -168,7 +168,6 @@ func (s *ServerConn) Handshake() error {
 	}
 	s.mux = newMux(s.transport)
 	go s.handleGlobalRequests()
-	go s.mux.Loop()
 
 	return err
 }

@@ -17,9 +17,6 @@ func muxPair() (*mux, *mux) {
 	s := newMux(a)
 	c := newMux(b)
 
-	go s.Loop()
-	go c.Loop()
-
 	return s, c
 }
 
@@ -353,6 +350,10 @@ func TestMuxDisconnect(t *testing.T) {
 	ok, _, err := a.SendRequest("hello", true, nil)
 	if ok || err == nil {
 		t.Errorf("got reply after disconnecting")
+	}
+	err = b.Wait()
+	if d, ok := err.(*disconnectMsg); !ok || d.Reason != 42 {
+		t.Errorf("got %#v, want disconnectMsg{Reason:42}", err)
 	}
 }
 

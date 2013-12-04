@@ -94,21 +94,36 @@ type mux struct {
 	globalSentMu     sync.Mutex
 	globalResponses  chan interface{}
 	incomingRequests chan *Request
+
+	errCond *sync.Cond
+	err     error
 }
 
 // Each new chanList instantiation has a different offset.
 var globalOff uint32
 
-// newMux returns a mux that runs over the given connection. Caller
-// should run Loop for returned mux.
+// Wait blocks until the connection has shut down, and returns the
+// error causing the shutdown.
+func (m *mux) Wait() error {
+	m.errCond.L.Lock()
+	defer m.errCond.L.Unlock()
+	for m.err == nil {
+		m.errCond.Wait()
+	}
+	return m.err
+}
+
+// newMux returns a mux that runs over the given connection.
 func newMux(p packetConn) *mux {
 	m := &mux{
 		conn:             p,
 		incomingChannels: make(chan *channel, 16),
 		globalResponses:  make(chan interface{}, 1),
 		incomingRequests: make(chan *Request, 16),
+		errCond:          newCond(),
 	}
 	m.chanList.offset = atomic.AddUint32(&globalOff, 1)
+	go m.loop()
 	return m
 }
 
@@ -176,16 +191,12 @@ func (m *mux) Close() error {
 	return m.conn.Close()
 }
 
-// Loop runs the connection machine. It will process packets until an
-// error is encountered, returning that error. When the loop exits,
-// the connection is closed.
-func (m *mux) Loop() error {
+// loop runs the connection machine. It will process packets until an
+// error is encountered. To synchronize on loop exit, use mux.Wait.
+func (m *mux) loop() {
 	var err error
 	for err == nil {
 		err = m.onePacket()
-	}
-	if debugMux && err != nil {
-		log.Println("loop exit", err)
 	}
 
 	for _, ch := range m.chanList.dropAll() {
@@ -207,7 +218,15 @@ func (m *mux) Loop() error {
 	close(m.globalResponses)
 
 	m.conn.Close()
-	return err
+
+	m.errCond.L.Lock()
+	m.err = err
+	m.errCond.Broadcast()
+	m.errCond.L.Unlock()
+
+	if debugMux {
+		log.Println("loop exit", err)
+	}
 }
 
 // onePacket reads and processes one packet.
@@ -262,7 +281,7 @@ func (m *mux) handleDisconnect(packet []byte) error {
 		// diagnostics. We could try to return those?
 		log.Printf("caught disconnect: %v", d)
 	}
-	return io.EOF
+	return &d
 }
 
 func (m *mux) handleGlobalPacket(packet []byte) error {

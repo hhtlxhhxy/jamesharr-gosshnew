@@ -7,6 +7,7 @@ package ssh
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math/big"
 	"reflect"
@@ -36,10 +37,16 @@ const (
 // See RFC 4253, section 11.1.
 const msgDisconnect = 1
 
+// disconnectMsg is the message that signals a disconnect. It is also
+// the error type returned from mux.Wait()
 type disconnectMsg struct {
 	Reason   uint32 `sshtype:"1"`
 	Message  string
 	Language string
+}
+
+func (d *disconnectMsg) Error() string {
+	return fmt.Sprintf("ssh: disconnect reason %d: %s", d.Reason, d.Message)
 }
 
 // See RFC 4253, section 7.1.

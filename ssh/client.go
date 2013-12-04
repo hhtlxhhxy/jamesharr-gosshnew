@@ -45,7 +45,7 @@ func clientWithAddress(c net.Conn, addr string, config *ClientConfig) (*ClientCo
 	go conn.handleGlobalRequests(conn.mux.incomingRequests)
 	go conn.handleChannelOpens(conn.mux.incomingChannels)
 	go func() {
-		conn.mux.Loop()
+		conn.mux.Wait()
 		conn.forwardList.closeAll()
 	}()
 	return conn, nil
