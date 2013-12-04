@@ -153,8 +153,10 @@ func (c *ClientConn) handleChannelOpen(newCh NewChannel) {
 
 // DiscardIncoming rejects all incoming requests.
 func DiscardIncoming(in <-chan *Request) {
-	for _ = range in {
-		// TODO(hanwen): respond to WantReply requests.
+	for req := range in {
+		if req.WantReply {
+			req.Reply(false, nil)
+		}
 	}
 }
 
