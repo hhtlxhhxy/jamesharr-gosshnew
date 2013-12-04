@@ -514,7 +514,7 @@ func sendStatus(status uint32, ch Channel, t *testing.T) {
 	msg := exitStatusMsg{
 		Status: status,
 	}
-	if _, err := ch.SendRequest("exit-status", false, marshal(0, msg)); err != nil {
+	if _, err := ch.SendRequest("exit-status", false, marshal(msg)); err != nil {
 		t.Errorf("unable to send status: %v", err)
 	}
 }
@@ -526,7 +526,7 @@ func sendSignal(signal string, ch Channel, t *testing.T) {
 		Errmsg:     "Process terminated",
 		Lang:       "en-GB-oed",
 	}
-	if _, err := ch.SendRequest("exit-signal", false, marshal(0, sig)); err != nil {
+	if _, err := ch.SendRequest("exit-signal", false, marshal(sig)); err != nil {
 		t.Errorf("unable to send signal: %v", err)
 	}
 }

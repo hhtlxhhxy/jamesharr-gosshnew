@@ -94,7 +94,7 @@ func (c *ClientConn) ListenTCP(laddr *net.TCPAddr) (net.Listener, error) {
 		uint32(laddr.Port),
 	}
 	// send message
-	ok, resp, err := c.mux.SendRequest("tcpip-forward", true, marshalBare(m))
+	ok, resp, err := c.mux.SendRequest("tcpip-forward", true, marshal(m))
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (l *tcpListener) Close() error {
 
 	// this also closes the listener.
 	l.conn.forwardList.remove(*l.laddr)
-	ok, _, err := l.conn.mux.SendRequest("cancel-tcpip-forward", true, marshalBare(m))
+	ok, _, err := l.conn.mux.SendRequest("cancel-tcpip-forward", true, marshal(m))
 	if err == nil && !ok {
 		err = errors.New("ssh: cancel-tcpip-forward failed")
 	}
@@ -291,8 +291,7 @@ func (c *ClientConn) dial(laddr string, lport int, raddr string, rport int) (Cha
 		laddr: laddr,
 		lport: uint32(lport),
 	}
-
-	ch, err := c.mux.OpenChannel("direct-tcpip", marshalBare(msg))
+	ch, err := c.mux.OpenChannel("direct-tcpip", marshal(msg))
 	go DiscardIncoming(ch.incomingRequests)
 	return ch, err
 }

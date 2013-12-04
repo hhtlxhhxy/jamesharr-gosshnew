@@ -197,12 +197,12 @@ func (c *channel) writePacket(packet []byte) error {
 	return err
 }
 
-func (c *channel) sendMessage(code byte, msg interface{}) error {
+func (c *channel) sendMessage(msg interface{}) error {
 	if debugMux {
 		log.Printf("send %d: %#v", c.mux.chanList.offset, msg)
 	}
 
-	p := marshal(code, msg)
+	p := marshal(msg)
 	binary.BigEndian.PutUint32(p[1:], c.remoteId)
 	return c.writePacket(p)
 }
@@ -299,7 +299,7 @@ func (c *channel) adjustWindow(n uint32) error {
 	// the initial window setting, we don't worry about overflow.
 	c.myWindow += uint32(n)
 	c.mu.Unlock()
-	return c.sendMessage(msgChannelWindowAdjust, windowAdjustMsg{
+	return c.sendMessage(windowAdjustMsg{
 		AdditionalBytes: uint32(n),
 	})
 }
@@ -334,7 +334,7 @@ func (c *channel) handlePacket(packet []byte) error {
 		return c.handleData(packet)
 	case msgChannelClose:
 		// Ack the close.
-		c.sendMessage(msgChannelClose, channelCloseMsg{
+		c.sendMessage(channelCloseMsg{
 			PeersId: c.remoteId})
 
 		c.pending.eof()
@@ -436,7 +436,7 @@ func (c *channel) Accept() (Channel, <-chan *Request, error) {
 		MaxPacketSize: c.maxPayload,
 	}
 	c.decided = true
-	if err := c.sendMessage(msgChannelOpenConfirm, confirm); err != nil {
+	if err := c.sendMessage(confirm); err != nil {
 		return nil, nil, err
 	}
 
@@ -454,7 +454,7 @@ func (ch *channel) Reject(reason RejectionReason, message string) error {
 		Language: "en",
 	}
 	ch.decided = true
-	return ch.sendMessage(msgChannelOpenFailure, reject)
+	return ch.sendMessage(reject)
 }
 
 func (ch *channel) Read(data []byte) (int, error) {
@@ -476,7 +476,7 @@ func (ch *channel) CloseWrite() error {
 		return errUndecided
 	}
 	ch.sentEOF = true
-	return ch.sendMessage(msgChannelEOF, channelEOFMsg{
+	return ch.sendMessage(channelEOFMsg{
 		PeersId: ch.remoteId})
 }
 
@@ -485,7 +485,7 @@ func (ch *channel) Close() error {
 		return errUndecided
 	}
 
-	return ch.sendMessage(msgChannelClose, channelCloseMsg{
+	return ch.sendMessage(channelCloseMsg{
 		PeersId: ch.remoteId})
 }
 
@@ -517,7 +517,7 @@ func (ch *channel) SendRequest(name string, wantReply bool, payload []byte) (boo
 		RequestSpecificData: payload,
 	}
 
-	if err := ch.sendMessage(msgChannelRequest, msg); err != nil {
+	if err := ch.sendMessage(msg); err != nil {
 		return false, err
 	}
 
@@ -546,19 +546,16 @@ func (ch *channel) ackRequest(ok bool) error {
 	}
 
 	var msg interface{}
-	var code byte
 	if !ok {
-		code = msgChannelFailure
 		msg = channelRequestFailureMsg{
 			PeersId: ch.remoteId,
 		}
 	} else {
-		code = msgChannelSuccess
 		msg = channelRequestSuccessMsg{
 			PeersId: ch.remoteId,
 		}
 	}
-	return ch.sendMessage(code, msg)
+	return ch.sendMessage(msg)
 }
 
 func (ch *channel) ChannelType() string {

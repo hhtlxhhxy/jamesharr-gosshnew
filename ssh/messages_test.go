@@ -64,8 +64,8 @@ func TestMarshalUnmarshal(t *testing.T) {
 			m1 := v.Elem().Interface()
 			m2 := iface
 
-			marshaled := marshal(msgIgnore, m1)
-			if err := unmarshal(m2, marshaled, msgIgnore); err != nil {
+			marshaled := marshal(m1)
+			if err := unmarshal(m2, marshaled); err != nil {
 				t.Errorf("#%d failed to unmarshal %#v: %s", i, m1, err)
 				break
 			}
@@ -81,27 +81,28 @@ func TestMarshalUnmarshal(t *testing.T) {
 func TestUnmarshalEmptyPacket(t *testing.T) {
 	var b []byte
 	var m channelRequestSuccessMsg
-	err := unmarshal(&m, b, msgChannelRequest)
-	want := ParseError{msgChannelRequest}
+	err := unmarshal(&m, b)
+	want := ParseError{msgChannelSuccess}
 	if _, ok := err.(ParseError); !ok {
 		t.Fatalf("got %T, want %T", err, want)
 	}
 	if got := err.(ParseError); want != got {
-		t.Fatal("got %#v, want %#v", got, want)
+		t.Fatalf("got %#v, want %#v", got, want)
 	}
 }
 
 func TestUnmarshalUnexpectedPacket(t *testing.T) {
 	type S struct {
-		I uint32
+		I uint32 `sshtype:"43"`
 		S string
 		B bool
 	}
 
-	s := S{42, "hello", true}
-	packet := marshal(42, s)
+	s := S{11, "hello", true}
+	packet := marshal(s)
+	packet[0] = 42
 	roundtrip := S{}
-	err := unmarshal(&roundtrip, packet, 43)
+	err := unmarshal(&roundtrip, packet)
 	if err == nil {
 		t.Fatal("expected error, not nil")
 	}
@@ -119,9 +120,9 @@ func TestBareMarshalUnmarshal(t *testing.T) {
 	}
 
 	s := S{42, "hello", true}
-	packet := marshalBare(s)
+	packet := marshal(s)
 	roundtrip := S{}
-	unmarshal(&roundtrip, packet, 0)
+	unmarshal(&roundtrip, packet)
 
 	if !reflect.DeepEqual(s, roundtrip) {
 		t.Errorf("got %#v, want %#v", roundtrip, s)
@@ -133,7 +134,7 @@ func TestBareMarshal(t *testing.T) {
 		I uint32
 	}
 	s := S2{42}
-	packet := marshalBare(s)
+	packet := marshal(s)
 	i, rest, ok := parseUint32(packet)
 	if len(rest) > 0 || !ok {
 		t.Errorf("parseInt(%q): parse error", packet)
@@ -201,32 +202,32 @@ var (
 	_kexInitMsg   = new(kexInitMsg).Generate(rand.New(rand.NewSource(0)), 10).Elem().Interface()
 	_kexDHInitMsg = new(kexDHInitMsg).Generate(rand.New(rand.NewSource(0)), 10).Elem().Interface()
 
-	_kexInit   = marshal(msgKexInit, _kexInitMsg)
-	_kexDHInit = marshal(msgKexDHInit, _kexDHInitMsg)
+	_kexInit   = marshal(_kexInitMsg)
+	_kexDHInit = marshal(_kexDHInitMsg)
 )
 
 func BenchmarkMarshalKexInitMsg(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		marshal(msgKexInit, _kexInitMsg)
+		marshal(_kexInitMsg)
 	}
 }
 
 func BenchmarkUnmarshalKexInitMsg(b *testing.B) {
 	m := new(kexInitMsg)
 	for i := 0; i < b.N; i++ {
-		unmarshal(m, _kexInit, msgKexInit)
+		unmarshal(m, _kexInit)
 	}
 }
 
 func BenchmarkMarshalKexDHInitMsg(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		marshal(msgKexDHInit, _kexDHInitMsg)
+		marshal(_kexDHInitMsg)
 	}
 }
 
 func BenchmarkUnmarshalKexDHInitMsg(b *testing.B) {
 	m := new(kexDHInitMsg)
 	for i := 0; i < b.N; i++ {
-		unmarshal(m, _kexDHInit, msgKexDHInit)
+		unmarshal(m, _kexDHInit)
 	}
 }

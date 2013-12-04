@@ -433,8 +433,7 @@ func TestZeroWindowAdjust(t *testing.T) {
 	go func() {
 		io.WriteString(a, "hello")
 		// bogus adjust.
-		a.sendMessage(
-			msgChannelWindowAdjust, windowAdjustMsg{})
+		a.sendMessage(windowAdjustMsg{})
 		io.WriteString(a, "world")
 		a.Close()
 	}()

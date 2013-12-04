@@ -14,7 +14,7 @@ import (
 // authenticate authenticates with the remote server. See RFC 4252.
 func (c *ClientConn) authenticate() error {
 	// initiate user auth session
-	if err := c.transport.writePacket(marshal(msgServiceRequest, serviceRequestMsg{serviceUserAuth})); err != nil {
+	if err := c.transport.writePacket(marshal(serviceRequestMsg{serviceUserAuth})); err != nil {
 		return err
 	}
 	packet, err := c.transport.readPacket()
@@ -22,7 +22,7 @@ func (c *ClientConn) authenticate() error {
 		return err
 	}
 	var serviceAccept serviceAcceptMsg
-	if err := unmarshal(&serviceAccept, packet, msgServiceAccept); err != nil {
+	if err := unmarshal(&serviceAccept, packet); err != nil {
 		return err
 	}
 
@@ -92,7 +92,7 @@ type ClientAuth interface {
 type noneAuth int
 
 func (n *noneAuth) auth(session []byte, user string, c packetConn, rand io.Reader) (bool, []string, error) {
-	if err := c.writePacket(marshal(msgUserAuthRequest, userAuthRequestMsg{
+	if err := c.writePacket(marshal(userAuthRequestMsg{
 		User:    user,
 		Service: serviceSSH,
 		Method:  "none",
@@ -114,7 +114,7 @@ type passwordAuth struct {
 
 func (p *passwordAuth) auth(session []byte, user string, c packetConn, rand io.Reader) (bool, []string, error) {
 	type passwordAuthMsg struct {
-		User     string
+		User     string `sshtype:"50"`
 		Service  string
 		Method   string
 		Reply    bool
@@ -126,7 +126,7 @@ func (p *passwordAuth) auth(session []byte, user string, c packetConn, rand io.R
 		return false, nil, err
 	}
 
-	if err := c.writePacket(marshal(msgUserAuthRequest, passwordAuthMsg{
+	if err := c.writePacket(marshal(passwordAuthMsg{
 		User:     user,
 		Service:  serviceSSH,
 		Method:   "password",
@@ -165,7 +165,7 @@ type publickeyAuth struct {
 }
 
 type publickeyAuthMsg struct {
-	User    string
+	User    string `sshtype:"50"`
 	Service string
 	Method  string
 	// HasSig indicates to the receiver packet that the auth request is signed and
@@ -228,7 +228,7 @@ func (p *publickeyAuth) auth(session []byte, user string, c packetConn, rand io.
 			Pubkey:   string(pubkey),
 			Sig:      sig,
 		}
-		p := marshal(msgUserAuthRequest, msg)
+		p := marshal(msg)
 		if err := c.writePacket(p); err != nil {
 			return false, nil, err
 		}
@@ -255,7 +255,7 @@ func (p *publickeyAuth) validateKey(key PublicKey, user string, c packetConn) (b
 		Algoname: algoname,
 		Pubkey:   string(pubkey),
 	}
-	if err := c.writePacket(marshal(msgUserAuthRequest, msg)); err != nil {
+	if err := c.writePacket(marshal(msg)); err != nil {
 		return false, err
 	}
 
@@ -276,7 +276,7 @@ func (p *publickeyAuth) confirmKeyAck(key PublicKey, c packetConn) (bool, error)
 			// TODO(gpaul): add callback to present the banner to the user
 		case msgUserAuthPubKeyOk:
 			msg := userAuthPubKeyOkMsg{}
-			if err := unmarshal(&msg, packet, msgUserAuthPubKeyOk); err != nil {
+			if err := unmarshal(&msg, packet); err != nil {
 				return false, err
 			}
 			if msg.Algo != algoname || msg.PubKey != string(pubkey) {
@@ -316,7 +316,7 @@ func handleAuthResponse(c packetConn) (bool, []string, error) {
 			// TODO: add callback to present the banner to the user
 		case msgUserAuthFailure:
 			msg := userAuthFailureMsg{}
-			if err := unmarshal(&msg, packet, msgUserAuthFailure); err != nil {
+			if err := unmarshal(&msg, packet); err != nil {
 				return false, nil, err
 			}
 			return false, msg.Methods, nil
@@ -404,14 +404,14 @@ func (k *keyboardInteractiveAuth) method() string {
 
 func (k *keyboardInteractiveAuth) auth(session []byte, user string, c packetConn, rand io.Reader) (bool, []string, error) {
 	type initiateMsg struct {
-		User       string
+		User       string `sshtype:"50"`
 		Service    string
 		Method     string
 		Language   string
 		Submethods string
 	}
 
-	if err := c.writePacket(marshal(msgUserAuthRequest, initiateMsg{
+	if err := c.writePacket(marshal(initiateMsg{
 		User:    user,
 		Service: serviceSSH,
 		Method:  "keyboard-interactive",
@@ -434,7 +434,7 @@ func (k *keyboardInteractiveAuth) auth(session []byte, user string, c packetConn
 			// OK
 		case msgUserAuthFailure:
 			var msg userAuthFailureMsg
-			if err := unmarshal(&msg, packet, msgUserAuthFailure); err != nil {
+			if err := unmarshal(&msg, packet); err != nil {
 				return false, nil, err
 			}
 			return false, msg.Methods, nil
@@ -445,7 +445,7 @@ func (k *keyboardInteractiveAuth) auth(session []byte, user string, c packetConn
 		}
 
 		var msg userAuthInfoRequestMsg
-		if err := unmarshal(&msg, packet, packet[0]); err != nil {
+		if err := unmarshal(&msg, packet); err != nil {
 			return false, nil, err
 		}
 

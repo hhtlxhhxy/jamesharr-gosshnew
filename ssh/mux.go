@@ -112,8 +112,8 @@ func newMux(p packetConn) *mux {
 	return m
 }
 
-func (m *mux) sendMessage(code byte, msg interface{}) error {
-	p := marshal(code, msg)
+func (m *mux) sendMessage(msg interface{}) error {
+	p := marshal(msg)
 	return m.conn.writePacket(p)
 }
 
@@ -125,12 +125,11 @@ func (m *mux) SendRequest(name string, wantReply bool, payload []byte) (bool, []
 		defer m.globalSentMu.Unlock()
 	}
 
-	if err := m.sendMessage(msgGlobalRequest,
-		globalRequestMsg{
-			Type:      name,
-			WantReply: wantReply,
-			Data:      payload,
-		}); err != nil {
+	if err := m.sendMessage(globalRequestMsg{
+		Type:      name,
+		WantReply: wantReply,
+		Data:      payload,
+	}); err != nil {
 		return false, nil, err
 	}
 
@@ -156,10 +155,9 @@ func (m *mux) SendRequest(name string, wantReply bool, payload []byte) (bool, []
 // has WantReply set.
 func (m *mux) ackRequest(ok bool, data []byte) error {
 	if ok {
-		return m.sendMessage(msgRequestSuccess,
-			globalRequestSuccessMsg{Data: data})
+		return m.sendMessage(globalRequestSuccessMsg{Data: data})
 	}
-	return m.sendMessage(msgRequestFailure, globalRequestFailureMsg{Data: data})
+	return m.sendMessage(globalRequestFailureMsg{Data: data})
 }
 
 // TODO(hanwen): Disconnect is a transport layer message. We should
@@ -168,7 +166,7 @@ func (m *mux) ackRequest(ok bool, data []byte) error {
 
 // Disconnect sends a disconnect message.
 func (m *mux) Disconnect(reason uint32, message string) error {
-	return m.sendMessage(msgDisconnect, disconnectMsg{
+	return m.sendMessage(disconnectMsg{
 		Reason:  reason,
 		Message: message,
 	})
@@ -255,7 +253,7 @@ func (m *mux) onePacket() error {
 
 func (m *mux) handleDisconnect(packet []byte) error {
 	var d disconnectMsg
-	if err := unmarshal(&d, packet, msgDisconnect); err != nil {
+	if err := unmarshal(&d, packet); err != nil {
 		return err
 	}
 
@@ -293,7 +291,7 @@ func (m *mux) handleGlobalPacket(packet []byte) error {
 // handleChannelOpen schedules a channel to be Accept()ed.
 func (m *mux) handleChannelOpen(packet []byte) error {
 	var msg channelOpenMsg
-	if err := unmarshal(&msg, packet, msgChannelOpen); err != nil {
+	if err := unmarshal(&msg, packet); err != nil {
 		return err
 	}
 
@@ -304,7 +302,7 @@ func (m *mux) handleChannelOpen(packet []byte) error {
 			Message:  "invalid request",
 			Language: "en_US.UTF-8",
 		}
-		return m.sendMessage(msgChannelOpenFailure, failMsg)
+		return m.sendMessage(failMsg)
 	}
 
 	c := m.newChannel(msg.ChanType, msg.TypeSpecificData)
@@ -340,7 +338,7 @@ func (m *mux) OpenChannel(chanType string, extra []byte) (*channel, error) {
 		TypeSpecificData: extra,
 		PeersId:          ch.localId,
 	}
-	if err := m.sendMessage(msgChannelOpen, open); err != nil {
+	if err := m.sendMessage(open); err != nil {
 		return nil, err
 	}
 

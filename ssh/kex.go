@@ -94,7 +94,7 @@ func (group *dhGroup) Client(c packetConn, randSource io.Reader, magics *handsha
 	kexDHInit := kexDHInitMsg{
 		X: X,
 	}
-	if err := c.writePacket(marshal(msgKexDHInit, kexDHInit)); err != nil {
+	if err := c.writePacket(marshal(kexDHInit)); err != nil {
 		return nil, err
 	}
 
@@ -104,7 +104,7 @@ func (group *dhGroup) Client(c packetConn, randSource io.Reader, magics *handsha
 	}
 
 	var kexDHReply kexDHReplyMsg
-	if err = unmarshal(&kexDHReply, packet, msgKexDHReply); err != nil {
+	if err = unmarshal(&kexDHReply, packet); err != nil {
 		return nil, err
 	}
 
@@ -138,7 +138,7 @@ func (group *dhGroup) Server(c packetConn, randSource io.Reader, magics *handsha
 		return
 	}
 	var kexDHInit kexDHInitMsg
-	if err = unmarshal(&kexDHInit, packet, msgKexDHInit); err != nil {
+	if err = unmarshal(&kexDHInit, packet); err != nil {
 		return
 	}
 
@@ -179,7 +179,7 @@ func (group *dhGroup) Server(c packetConn, randSource io.Reader, magics *handsha
 		Y:         Y,
 		Signature: sig,
 	}
-	packet = marshal(msgKexDHReply, kexDHReply)
+	packet = marshal(kexDHReply)
 
 	err = c.writePacket(packet)
 	return &kexResult{
@@ -207,7 +207,7 @@ func (kex *ecdh) Client(c packetConn, rand io.Reader, magics *handshakeMagics) (
 		ClientPubKey: elliptic.Marshal(kex.curve, ephKey.PublicKey.X, ephKey.PublicKey.Y),
 	}
 
-	serialized := marshal(msgKexECDHInit, kexInit)
+	serialized := marshal(kexInit)
 	if err := c.writePacket(serialized); err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (kex *ecdh) Client(c packetConn, rand io.Reader, magics *handshakeMagics) (
 	}
 
 	var reply kexECDHReplyMsg
-	if err = unmarshal(&reply, packet, msgKexECDHReply); err != nil {
+	if err = unmarshal(&reply, packet); err != nil {
 		return nil, err
 	}
 
@@ -297,7 +297,7 @@ func (kex *ecdh) Server(c packetConn, rand io.Reader, magics *handshakeMagics, p
 	}
 
 	var kexECDHInit kexECDHInitMsg
-	if err = unmarshal(&kexECDHInit, packet, msgKexECDHInit); err != nil {
+	if err = unmarshal(&kexECDHInit, packet); err != nil {
 		return nil, err
 	}
 
@@ -346,7 +346,7 @@ func (kex *ecdh) Server(c packetConn, rand io.Reader, magics *handshakeMagics, p
 		Signature:       sig,
 	}
 
-	serialized := marshal(msgKexECDHReply, reply)
+	serialized := marshal(reply)
 	if err := c.writePacket(serialized); err != nil {
 		return nil, err
 	}

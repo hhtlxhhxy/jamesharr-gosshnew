@@ -16,9 +16,6 @@ import (
 // See [PROTOCOL.agent], section 3.
 const (
 	// 3.2 Requests from client to agent for protocol 2 key operations
-	agentRequestIdentities   = 11
-	agentSignRequest         = 13
-	agentAddIdentity         = 17
 	agentRemoveIdentity      = 18
 	agentRemoveAllIdentities = 19
 	agentAddIdConstrained    = 25
@@ -29,14 +26,6 @@ const (
 	agentLock                       = 22
 	agentUnlock                     = 23
 	agentAddSmartcardKeyConstrained = 26
-
-	// 3.4 Generic replies from agent to client
-	agentFailure = 5
-	agentSuccess = 6
-
-	// 3.6 Replies from agent to client for protocol 2 key operations
-	agentIdentitiesAnswer = 12
-	agentSignResponse     = 14
 
 	// 3.7 Key constraint identifiers
 	agentConstrainLifetime = 1
@@ -51,29 +40,44 @@ const maxAgentResponseBytes = 16 << 20
 // These structures mirror the wire format of the corresponding ssh agent
 // messages found in [PROTOCOL.agent].
 
+// 3.4 Generic replies from agent to client
+const agentFailure = 5
+
 type failureAgentMsg struct{}
+
+const agentSuccess = 6
 
 type successAgentMsg struct{}
 
 // See [PROTOCOL.agent], section 2.5.2.
+const agentRequestIdentities = 11
+
 type requestIdentitiesAgentMsg struct{}
 
 // See [PROTOCOL.agent], section 2.5.2.
+const agentIdentitiesAnswer = 12
+
 type identitiesAnswerAgentMsg struct {
-	NumKeys uint32
+	NumKeys uint32 `sshtype:"12"`
 	Keys    []byte `ssh:"rest"`
 }
 
 // See [PROTOCOL.agent], section 2.6.2.
+const agentSignRequest = 13
+
 type signRequestAgentMsg struct {
-	KeyBlob []byte
+	KeyBlob []byte `sshtype:"13"`
 	Data    []byte
 	Flags   uint32
 }
 
 // See [PROTOCOL.agent], section 2.6.2.
+
+// 3.6 Replies from agent to client for protocol 2 key operations
+const agentSignResponse = 14
+
 type signResponseAgentMsg struct {
-	SigBlob []byte
+	SigBlob []byte `sshtype:"14"`
 }
 
 // AgentKey represents a protocol 2 key as defined in [PROTOCOL.agent],
@@ -142,7 +146,7 @@ func NewAgentClient(rw io.ReadWriter) *AgentClient {
 // sendAndReceive sends req to the agent and waits for a reply. On success,
 // the reply is unmarshaled into reply and replyType is set to the first byte of
 // the reply, which contains the type of the message.
-func (ac *AgentClient) sendAndReceive(req []byte) (reply interface{}, replyType uint8, err error) {
+func (ac *AgentClient) sendAndReceive(req []byte) (reply interface{}, err error) {
 	// ac.mu prevents multiple, concurrent requests. Since the agent is typically
 	// on the same machine, we don't attempt to pipeline the requests.
 	ac.mu.Lock()
@@ -175,9 +179,9 @@ func (ac *AgentClient) sendAndReceive(req []byte) (reply interface{}, replyType 
 // RequestIdentities queries the agent for protocol 2 keys as defined in
 // [PROTOCOL.agent] section 2.5.2.
 func (ac *AgentClient) RequestIdentities() ([]*AgentKey, error) {
-	req := marshal(agentRequestIdentities, requestIdentitiesAgentMsg{})
+	req := []byte{agentRequestIdentities}
 
-	msg, msgType, err := ac.sendAndReceive(req)
+	msg, err := ac.sendAndReceive(req)
 	if err != nil {
 		return nil, err
 	}
@@ -201,18 +205,18 @@ func (ac *AgentClient) RequestIdentities() ([]*AgentKey, error) {
 	case *failureAgentMsg:
 		return nil, errors.New("ssh: failed to list keys")
 	}
-	return nil, UnexpectedMessageError{agentIdentitiesAnswer, msgType}
+	panic("unreachable")
 }
 
 // SignRequest requests the signing of data by the agent using a protocol 2 key
 // as defined in [PROTOCOL.agent] section 2.6.2.
 func (ac *AgentClient) SignRequest(key PublicKey, data []byte) ([]byte, error) {
-	req := marshal(agentSignRequest, signRequestAgentMsg{
+	req := marshal(signRequestAgentMsg{
 		KeyBlob: MarshalPublicKey(key),
 		Data:    data,
 	})
 
-	msg, msgType, err := ac.sendAndReceive(req)
+	msg, err := ac.sendAndReceive(req)
 	if err != nil {
 		return nil, err
 	}
@@ -223,36 +227,38 @@ func (ac *AgentClient) SignRequest(key PublicKey, data []byte) ([]byte, error) {
 	case *failureAgentMsg:
 		return nil, errors.New("ssh: failed to sign challenge")
 	}
-	return nil, UnexpectedMessageError{agentSignResponse, msgType}
+	panic("unreachable")
 }
 
 // unmarshalAgentMsg parses an agent message in packet, returning the parsed
 // form and the message type of packet.
-func unmarshalAgentMsg(packet []byte) (interface{}, uint8, error) {
+func unmarshalAgentMsg(packet []byte) (interface{}, error) {
 	if len(packet) < 1 {
-		return nil, 0, ParseError{0}
+		return nil, ParseError{0}
 	}
 	var msg interface{}
 	switch packet[0] {
 	case agentFailure:
-		msg = new(failureAgentMsg)
+		return new(failureAgentMsg), nil
 	case agentSuccess:
-		msg = new(successAgentMsg)
+		return new(successAgentMsg), nil
 	case agentIdentitiesAnswer:
 		msg = new(identitiesAnswerAgentMsg)
 	case agentSignResponse:
 		msg = new(signResponseAgentMsg)
 	default:
-		return nil, 0, UnexpectedMessageError{0, packet[0]}
+		return nil, UnexpectedMessageError{0, packet[0]}
 	}
-	if err := unmarshal(msg, packet, packet[0]); err != nil {
-		return nil, 0, err
+	if err := unmarshal(msg, packet); err != nil {
+		return nil, err
 	}
-	return msg, packet[0], nil
+	return msg, nil
 }
 
+const agentAddIdentity = 17
+
 type rsaKeyMsg struct {
-	Type     string
+	Type     string `sshtype:"17"`
 	N        *big.Int
 	E        *big.Int
 	D        *big.Int
@@ -265,22 +271,21 @@ type rsaKeyMsg struct {
 func (ac *AgentClient) insert(s Signer, comment string) error {
 	switch k := s.(type) {
 	case *rsaPrivateKey:
-		req := marshal(agentAddIdentity,
-			rsaKeyMsg{
-				Type:     KeyAlgoRSA,
-				N:        k.N,
-				E:        big.NewInt(int64(k.E)),
-				D:        k.D,
-				Iqmp:     k.Precomputed.Qinv,
-				P:        k.Primes[0],
-				Q:        k.Primes[1],
-				Comments: comment,
-			})
-		_, msgType, err := ac.sendAndReceive(req)
+		req := marshal(rsaKeyMsg{
+			Type:     KeyAlgoRSA,
+			N:        k.N,
+			E:        big.NewInt(int64(k.E)),
+			D:        k.D,
+			Iqmp:     k.Precomputed.Qinv,
+			P:        k.Primes[0],
+			Q:        k.Primes[1],
+			Comments: comment,
+		})
+		resp, err := ac.sendAndReceive(req)
 		if err != nil {
 			return err
 		}
-		if msgType == agentSuccess {
+		if _, ok := resp.(*successAgentMsg); ok {
 			return nil
 		}
 		return errors.New("ssh: failure")
