@@ -211,7 +211,7 @@ func (ac *AgentClient) RequestIdentities() ([]*AgentKey, error) {
 // SignRequest requests the signing of data by the agent using a protocol 2 key
 // as defined in [PROTOCOL.agent] section 2.6.2.
 func (ac *AgentClient) SignRequest(key PublicKey, data []byte) ([]byte, error) {
-	req := marshal(signRequestAgentMsg{
+	req := Marshal(signRequestAgentMsg{
 		KeyBlob: MarshalPublicKey(key),
 		Data:    data,
 	})
@@ -249,7 +249,7 @@ func unmarshalAgentMsg(packet []byte) (interface{}, error) {
 	default:
 		return nil, UnexpectedMessageError{0, packet[0]}
 	}
-	if err := unmarshal(msg, packet); err != nil {
+	if err := Unmarshal(packet, msg); err != nil {
 		return nil, err
 	}
 	return msg, nil
@@ -271,7 +271,7 @@ type rsaKeyMsg struct {
 func (ac *AgentClient) insert(s Signer, comment string) error {
 	switch k := s.(type) {
 	case *rsaPrivateKey:
-		req := marshal(rsaKeyMsg{
+		req := Marshal(rsaKeyMsg{
 			Type:     KeyAlgoRSA,
 			N:        k.N,
 			E:        big.NewInt(int64(k.E)),

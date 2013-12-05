@@ -150,7 +150,7 @@ func (s *ServerConn) Handshake() error {
 	}
 
 	var serviceRequest serviceRequestMsg
-	if err = unmarshal(&serviceRequest, packet); err != nil {
+	if err = Unmarshal(packet, &serviceRequest); err != nil {
 		return err
 	}
 	if serviceRequest.Service != serviceUserAuth {
@@ -159,7 +159,7 @@ func (s *ServerConn) Handshake() error {
 	serviceAccept := serviceAcceptMsg{
 		Service: serviceUserAuth,
 	}
-	if err := s.transport.writePacket(marshal(serviceAccept)); err != nil {
+	if err := s.transport.writePacket(Marshal(serviceAccept)); err != nil {
 		return err
 	}
 
@@ -224,7 +224,7 @@ userAuthLoop:
 		if packet, err = s.transport.readPacket(); err != nil {
 			return err
 		}
-		if err = unmarshal(&userAuthReq, packet); err != nil {
+		if err = Unmarshal(packet, &userAuthReq); err != nil {
 			return err
 		}
 
@@ -295,7 +295,7 @@ userAuthLoop:
 						Algo:   algo,
 						PubKey: string(pubKey),
 					}
-					if err = s.transport.writePacket(marshal(okMsg)); err != nil {
+					if err = s.transport.writePacket(Marshal(okMsg)); err != nil {
 						return err
 					}
 					continue userAuthLoop
@@ -344,7 +344,7 @@ userAuthLoop:
 			return errors.New("ssh: no authentication methods configured but NoClientAuth is also false")
 		}
 
-		if err = s.transport.writePacket(marshal(failureMsg)); err != nil {
+		if err = s.transport.writePacket(Marshal(failureMsg)); err != nil {
 			return err
 		}
 	}
@@ -374,7 +374,7 @@ func (c *sshClientKeyboardInteractive) Challenge(user, instruction string, quest
 		prompts = appendBool(prompts, echos[i])
 	}
 
-	if err := c.transport.writePacket(marshal(userAuthInfoRequestMsg{
+	if err := c.transport.writePacket(Marshal(userAuthInfoRequestMsg{
 		Instruction: instruction,
 		NumPrompts:  uint32(len(questions)),
 		Prompts:     prompts,

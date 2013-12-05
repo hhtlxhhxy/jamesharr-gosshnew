@@ -64,9 +64,9 @@ func TestMarshalUnmarshal(t *testing.T) {
 			m1 := v.Elem().Interface()
 			m2 := iface
 
-			marshaled := marshal(m1)
-			if err := unmarshal(m2, marshaled); err != nil {
-				t.Errorf("#%d failed to unmarshal %#v: %s", i, m1, err)
+			marshaled := Marshal(m1)
+			if err := Unmarshal(marshaled, m2); err != nil {
+				t.Errorf("#%d failed to Unmarshal %#v: %s", i, m1, err)
 				break
 			}
 
@@ -81,7 +81,7 @@ func TestMarshalUnmarshal(t *testing.T) {
 func TestUnmarshalEmptyPacket(t *testing.T) {
 	var b []byte
 	var m channelRequestSuccessMsg
-	err := unmarshal(&m, b)
+	err := Unmarshal(b, &m)
 	want := ParseError{msgChannelSuccess}
 	if _, ok := err.(ParseError); !ok {
 		t.Fatalf("got %T, want %T", err, want)
@@ -99,10 +99,10 @@ func TestUnmarshalUnexpectedPacket(t *testing.T) {
 	}
 
 	s := S{11, "hello", true}
-	packet := marshal(s)
+	packet := Marshal(s)
 	packet[0] = 42
 	roundtrip := S{}
-	err := unmarshal(&roundtrip, packet)
+	err := Unmarshal(packet, &roundtrip)
 	if err == nil {
 		t.Fatal("expected error, not nil")
 	}
@@ -120,9 +120,9 @@ func TestBareMarshalUnmarshal(t *testing.T) {
 	}
 
 	s := S{42, "hello", true}
-	packet := marshal(s)
+	packet := Marshal(s)
 	roundtrip := S{}
-	unmarshal(&roundtrip, packet)
+	Unmarshal(packet, &roundtrip)
 
 	if !reflect.DeepEqual(s, roundtrip) {
 		t.Errorf("got %#v, want %#v", roundtrip, s)
@@ -134,7 +134,7 @@ func TestBareMarshal(t *testing.T) {
 		I uint32
 	}
 	s := S2{42}
-	packet := marshal(s)
+	packet := Marshal(s)
 	i, rest, ok := parseUint32(packet)
 	if len(rest) > 0 || !ok {
 		t.Errorf("parseInt(%q): parse error", packet)
@@ -202,32 +202,32 @@ var (
 	_kexInitMsg   = new(kexInitMsg).Generate(rand.New(rand.NewSource(0)), 10).Elem().Interface()
 	_kexDHInitMsg = new(kexDHInitMsg).Generate(rand.New(rand.NewSource(0)), 10).Elem().Interface()
 
-	_kexInit   = marshal(_kexInitMsg)
-	_kexDHInit = marshal(_kexDHInitMsg)
+	_kexInit   = Marshal(_kexInitMsg)
+	_kexDHInit = Marshal(_kexDHInitMsg)
 )
 
 func BenchmarkMarshalKexInitMsg(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		marshal(_kexInitMsg)
+		Marshal(_kexInitMsg)
 	}
 }
 
 func BenchmarkUnmarshalKexInitMsg(b *testing.B) {
 	m := new(kexInitMsg)
 	for i := 0; i < b.N; i++ {
-		unmarshal(m, _kexInit)
+		Unmarshal(_kexInit, m)
 	}
 }
 
 func BenchmarkMarshalKexDHInitMsg(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		marshal(_kexDHInitMsg)
+		Marshal(_kexDHInitMsg)
 	}
 }
 
 func BenchmarkUnmarshalKexDHInitMsg(b *testing.B) {
 	m := new(kexDHInitMsg)
 	for i := 0; i < b.N; i++ {
-		unmarshal(m, _kexDHInit)
+		Unmarshal(_kexDHInit, m)
 	}
 }

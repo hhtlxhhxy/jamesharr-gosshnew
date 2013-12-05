@@ -202,7 +202,7 @@ func (c *channel) sendMessage(msg interface{}) error {
 		log.Printf("send %d: %#v", c.mux.chanList.offset, msg)
 	}
 
-	p := marshal(msg)
+	p := Marshal(msg)
 	binary.BigEndian.PutUint32(p[1:], c.remoteId)
 	return c.writePacket(p)
 }

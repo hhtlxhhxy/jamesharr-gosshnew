@@ -156,7 +156,7 @@ func (s *Session) Setenv(name, value string) error {
 		Name:  name,
 		Value: value,
 	}
-	ok, err := s.ch.SendRequest("env", true, marshal(msg))
+	ok, err := s.ch.SendRequest("env", true, Marshal(msg))
 	if err == nil && !ok {
 		err = errors.New("ssh: setenv failed")
 	}
@@ -189,7 +189,7 @@ func (s *Session) RequestPty(term string, h, w int, termmodes TerminalModes) err
 		Height:   uint32(h * 8),
 		Modelist: string(tm),
 	}
-	ok, err := s.ch.SendRequest("pty-req", true, marshal(req))
+	ok, err := s.ch.SendRequest("pty-req", true, Marshal(req))
 	if err == nil && !ok {
 		err = errors.New("ssh: pty-req failed")
 	}
@@ -207,7 +207,7 @@ func (s *Session) RequestSubsystem(subsystem string) error {
 	msg := subsystemRequestMsg{
 		Subsystem: subsystem,
 	}
-	ok, err := s.ch.SendRequest("subsystem", true, marshal(msg))
+	ok, err := s.ch.SendRequest("subsystem", true, Marshal(msg))
 	if err == nil && !ok {
 		err = errors.New("ssh: subsystem request failed")
 	}
@@ -226,7 +226,7 @@ func (s *Session) Signal(sig Signal) error {
 		Signal: string(sig),
 	}
 
-	_, err := s.ch.SendRequest("signal", false, marshal(msg))
+	_, err := s.ch.SendRequest("signal", false, Marshal(msg))
 	return err
 }
 
@@ -246,7 +246,7 @@ func (s *Session) Start(cmd string) error {
 		Command: cmd,
 	}
 
-	ok, err := s.ch.SendRequest("exec", true, marshal(req))
+	ok, err := s.ch.SendRequest("exec", true, Marshal(req))
 	if err == nil && !ok {
 		err = fmt.Errorf("ssh: command %v failed", cmd)
 	}

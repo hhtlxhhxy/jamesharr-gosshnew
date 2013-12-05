@@ -14,7 +14,7 @@ import (
 // authenticate authenticates with the remote server. See RFC 4252.
 func (c *ClientConn) authenticate() error {
 	// initiate user auth session
-	if err := c.transport.writePacket(marshal(serviceRequestMsg{serviceUserAuth})); err != nil {
+	if err := c.transport.writePacket(Marshal(serviceRequestMsg{serviceUserAuth})); err != nil {
 		return err
 	}
 	packet, err := c.transport.readPacket()
@@ -22,7 +22,7 @@ func (c *ClientConn) authenticate() error {
 		return err
 	}
 	var serviceAccept serviceAcceptMsg
-	if err := unmarshal(&serviceAccept, packet); err != nil {
+	if err := Unmarshal(packet, &serviceAccept); err != nil {
 		return err
 	}
 
@@ -92,7 +92,7 @@ type ClientAuth interface {
 type noneAuth int
 
 func (n *noneAuth) auth(session []byte, user string, c packetConn, rand io.Reader) (bool, []string, error) {
-	if err := c.writePacket(marshal(userAuthRequestMsg{
+	if err := c.writePacket(Marshal(userAuthRequestMsg{
 		User:    user,
 		Service: serviceSSH,
 		Method:  "none",
@@ -126,7 +126,7 @@ func (p *passwordAuth) auth(session []byte, user string, c packetConn, rand io.R
 		return false, nil, err
 	}
 
-	if err := c.writePacket(marshal(passwordAuthMsg{
+	if err := c.writePacket(Marshal(passwordAuthMsg{
 		User:     user,
 		Service:  serviceSSH,
 		Method:   "password",
@@ -173,7 +173,7 @@ type publickeyAuthMsg struct {
 	HasSig   bool
 	Algoname string
 	Pubkey   string
-	// Sig is defined as []byte so marshal will exclude it during validateKey
+	// Sig is defined as []byte so Marshal will exclude it during validateKey
 	Sig []byte `ssh:"rest"`
 }
 
@@ -228,7 +228,7 @@ func (p *publickeyAuth) auth(session []byte, user string, c packetConn, rand io.
 			Pubkey:   string(pubkey),
 			Sig:      sig,
 		}
-		p := marshal(msg)
+		p := Marshal(msg)
 		if err := c.writePacket(p); err != nil {
 			return false, nil, err
 		}
@@ -255,7 +255,7 @@ func (p *publickeyAuth) validateKey(key PublicKey, user string, c packetConn) (b
 		Algoname: algoname,
 		Pubkey:   string(pubkey),
 	}
-	if err := c.writePacket(marshal(msg)); err != nil {
+	if err := c.writePacket(Marshal(msg)); err != nil {
 		return false, err
 	}
 
@@ -276,7 +276,7 @@ func (p *publickeyAuth) confirmKeyAck(key PublicKey, c packetConn) (bool, error)
 			// TODO(gpaul): add callback to present the banner to the user
 		case msgUserAuthPubKeyOk:
 			msg := userAuthPubKeyOkMsg{}
-			if err := unmarshal(&msg, packet); err != nil {
+			if err := Unmarshal(packet, &msg); err != nil {
 				return false, err
 			}
 			if msg.Algo != algoname || msg.PubKey != string(pubkey) {
@@ -316,7 +316,7 @@ func handleAuthResponse(c packetConn) (bool, []string, error) {
 			// TODO: add callback to present the banner to the user
 		case msgUserAuthFailure:
 			msg := userAuthFailureMsg{}
-			if err := unmarshal(&msg, packet); err != nil {
+			if err := Unmarshal(packet, &msg); err != nil {
 				return false, nil, err
 			}
 			return false, msg.Methods, nil
@@ -411,7 +411,7 @@ func (k *keyboardInteractiveAuth) auth(session []byte, user string, c packetConn
 		Submethods string
 	}
 
-	if err := c.writePacket(marshal(initiateMsg{
+	if err := c.writePacket(Marshal(initiateMsg{
 		User:    user,
 		Service: serviceSSH,
 		Method:  "keyboard-interactive",
@@ -434,7 +434,7 @@ func (k *keyboardInteractiveAuth) auth(session []byte, user string, c packetConn
 			// OK
 		case msgUserAuthFailure:
 			var msg userAuthFailureMsg
-			if err := unmarshal(&msg, packet); err != nil {
+			if err := Unmarshal(packet, &msg); err != nil {
 				return false, nil, err
 			}
 			return false, msg.Methods, nil
@@ -445,7 +445,7 @@ func (k *keyboardInteractiveAuth) auth(session []byte, user string, c packetConn
 		}
 
 		var msg userAuthInfoRequestMsg
-		if err := unmarshal(&msg, packet); err != nil {
+		if err := Unmarshal(packet, &msg); err != nil {
 			return false, nil, err
 		}
 

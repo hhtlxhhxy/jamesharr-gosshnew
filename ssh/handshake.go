@@ -241,7 +241,7 @@ func (t *handshakeTransport) sendKexInitLocked() (*kexInitMsg, []byte, error) {
 	} else {
 		msg.ServerHostKeyAlgos = supportedHostKeyAlgos
 	}
-	packet := marshal(*msg)
+	packet := Marshal(*msg)
 
 	// writePacket destroys the contents, so save a copy.
 	packetCopy := make([]byte, len(packet))
@@ -297,7 +297,7 @@ func (t *handshakeTransport) enterKeyExchange(otherInitPacket []byte) error {
 	}
 
 	otherInit := &kexInitMsg{}
-	if err := unmarshal(otherInit, otherInitPacket); err != nil {
+	if err := Unmarshal(otherInitPacket, otherInit); err != nil {
 		return err
 	}
 

@@ -267,21 +267,23 @@ func typeTag(structType reflect.Type) byte {
 	return tag
 }
 
-// unmarshal parses the SSH wire data in packet into out using
-// reflection. unmarshal either returns nil on success, or a
-// ParseError or UnexpectedMessageError on error.
-func unmarshal(out interface{}, packet []byte) error {
+// Unmarshal parses data in SSH wire format into a structure. The out
+// argument should be a pointer to struct. If the first member of the
+// struct has the "sshtype" tag set to a number in decimal, the packet
+// must start that number.  In case of error, Unmarshal returns a
+// ParseError or UnexpectedMessageError.
+func Unmarshal(data []byte, out interface{}) error {
 	v := reflect.ValueOf(out).Elem()
 	structType := v.Type()
 	expectedType := typeTag(structType)
-	if len(packet) == 0 {
+	if len(data) == 0 {
 		return ParseError{expectedType}
 	}
 	if expectedType > 0 {
-		if packet[0] != expectedType {
-			return UnexpectedMessageError{expectedType, packet[0]}
+		if data[0] != expectedType {
+			return UnexpectedMessageError{expectedType, data[0]}
 		}
-		packet = packet[1:]
+		data = data[1:]
 	}
 
 	var ok bool
@@ -290,31 +292,31 @@ func unmarshal(out interface{}, packet []byte) error {
 		t := field.Type()
 		switch t.Kind() {
 		case reflect.Bool:
-			if len(packet) < 1 {
+			if len(data) < 1 {
 				return ParseError{expectedType}
 			}
-			field.SetBool(packet[0] != 0)
-			packet = packet[1:]
+			field.SetBool(data[0] != 0)
+			data = data[1:]
 		case reflect.Array:
 			if t.Elem().Kind() != reflect.Uint8 {
 				panic("array of non-uint8")
 			}
-			if len(packet) < t.Len() {
+			if len(data) < t.Len() {
 				return ParseError{expectedType}
 			}
 			for j, n := 0, t.Len(); j < n; j++ {
-				field.Index(j).Set(reflect.ValueOf(packet[j]))
+				field.Index(j).Set(reflect.ValueOf(data[j]))
 			}
-			packet = packet[t.Len():]
+			data = data[t.Len():]
 		case reflect.Uint32:
 			var u32 uint32
-			if u32, packet, ok = parseUint32(packet); !ok {
+			if u32, data, ok = parseUint32(data); !ok {
 				return ParseError{expectedType}
 			}
 			field.SetUint(uint64(u32))
 		case reflect.String:
 			var s []byte
-			if s, packet, ok = parseString(packet); !ok {
+			if s, data, ok = parseString(data); !ok {
 				return ParseError{expectedType}
 			}
 			field.SetString(string(s))
@@ -322,18 +324,18 @@ func unmarshal(out interface{}, packet []byte) error {
 			switch t.Elem().Kind() {
 			case reflect.Uint8:
 				if structType.Field(i).Tag.Get("ssh") == "rest" {
-					field.Set(reflect.ValueOf(packet))
-					packet = nil
+					field.Set(reflect.ValueOf(data))
+					data = nil
 				} else {
 					var s []byte
-					if s, packet, ok = parseString(packet); !ok {
+					if s, data, ok = parseString(data); !ok {
 						return ParseError{expectedType}
 					}
 					field.Set(reflect.ValueOf(s))
 				}
 			case reflect.String:
 				var nl []string
-				if nl, packet, ok = parseNameList(packet); !ok {
+				if nl, data, ok = parseNameList(data); !ok {
 					return ParseError{expectedType}
 				}
 				field.Set(reflect.ValueOf(nl))
@@ -343,7 +345,7 @@ func unmarshal(out interface{}, packet []byte) error {
 		case reflect.Ptr:
 			if t == bigIntType {
 				var n *big.Int
-				if n, packet, ok = parseInt(packet); !ok {
+				if n, data, ok = parseInt(data); !ok {
 					return ParseError{expectedType}
 				}
 				field.Set(reflect.ValueOf(n))
@@ -355,16 +357,24 @@ func unmarshal(out interface{}, packet []byte) error {
 		}
 	}
 
-	if len(packet) != 0 {
+	if len(data) != 0 {
 		return ParseError{expectedType}
 	}
 
 	return nil
 }
 
-// marshal serializes the message in msg.
-func marshal(msg interface{}) []byte {
+// Marshal serializes the message in msg to SSH wire format.  The msg
+// argument should be a struct. If the first member has the "sshtype"
+// tag set to a number in decimal, that number is prepended to the
+// result. If the last of member has the "ssh" tag set to "rest", its
+// contents are appended to the output.
+func Marshal(msg interface{}) []byte {
 	out := make([]byte, 0, 64)
+	return marshalStruct(out, msg)
+}
+
+func marshalStruct(out []byte, msg interface{}) []byte {
 	v := reflect.ValueOf(msg)
 	msgType := typeTag(v.Type())
 	if msgType > 0 {
@@ -692,7 +702,7 @@ func decode(packet []byte) (interface{}, error) {
 	default:
 		return nil, UnexpectedMessageError{0, packet[0]}
 	}
-	if err := unmarshal(msg, packet); err != nil {
+	if err := Unmarshal(packet, msg); err != nil {
 		return nil, err
 	}
 	return msg, nil

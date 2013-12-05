@@ -54,20 +54,20 @@ var hashFuncs = map[string]crypto.Hash{
 // UnexpectedMessageError results when the SSH message that we received didn't
 // match what we wanted.
 type UnexpectedMessageError struct {
-	expected, got uint8
+	Expected, Got uint8
 }
 
 func (u UnexpectedMessageError) Error() string {
-	return fmt.Sprintf("ssh: unexpected message type %d (expected %d)", u.got, u.expected)
+	return fmt.Sprintf("ssh: unexpected message type %d (expected %d)", u.Got, u.Expected)
 }
 
 // ParseError results from a malformed SSH message.
 type ParseError struct {
-	msgType uint8
+	Type uint8
 }
 
 func (p ParseError) Error() string {
-	return fmt.Sprintf("ssh: parse error in message type %d", p.msgType)
+	return fmt.Sprintf("ssh: parse error in message type %d", p.Type)
 }
 
 func findCommonAlgorithm(clientAlgos []string, serverAlgos []string) (commonAlgo string, ok bool) {

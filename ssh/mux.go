@@ -128,7 +128,7 @@ func newMux(p packetConn) *mux {
 }
 
 func (m *mux) sendMessage(msg interface{}) error {
-	p := marshal(msg)
+	p := Marshal(msg)
 	return m.conn.writePacket(p)
 }
 
@@ -272,7 +272,7 @@ func (m *mux) onePacket() error {
 
 func (m *mux) handleDisconnect(packet []byte) error {
 	var d disconnectMsg
-	if err := unmarshal(&d, packet); err != nil {
+	if err := Unmarshal(packet, &d); err != nil {
 		return err
 	}
 
@@ -310,7 +310,7 @@ func (m *mux) handleGlobalPacket(packet []byte) error {
 // handleChannelOpen schedules a channel to be Accept()ed.
 func (m *mux) handleChannelOpen(packet []byte) error {
 	var msg channelOpenMsg
-	if err := unmarshal(&msg, packet); err != nil {
+	if err := Unmarshal(packet, &msg); err != nil {
 		return err
 	}
 
