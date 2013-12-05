@@ -25,8 +25,8 @@ func sshPipe() (*ClientConn, *ServerConn, error) {
 	serverConf.AddHostKey(ecdsaKey)
 	done := make(chan *ServerConn, 1)
 	go func() {
-		server := Server(c2, &serverConf)
-		if err := server.Handshake(); err != nil {
+		server, err := Server(c2, &serverConf)
+		if err != nil {
 			done <- nil
 		}
 		done <- server

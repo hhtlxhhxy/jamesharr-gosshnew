@@ -95,16 +95,21 @@ type ServerConn struct {
 	mux *mux
 }
 
-// Server returns a new SSH server connection
-// using c as the underlying transport.
-func Server(c net.Conn, config *ServerConfig) *ServerConn {
+// Server starts an new SSH server on with c as the underlying
+// transport.  It starts with a handshake, and if the handshake is
+// unsuccessful, it closes the connection and returns an error.
+func Server(c net.Conn, config *ServerConfig) (*ServerConn, error) {
 	fullConf := *config
 	fullConf.setDefaults()
 	s := &ServerConn{
 		sshConn: sshConn{conn: c},
 		config:  &fullConf,
 	}
-	return s
+	if err := s.handshake(); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return s, nil
 }
 
 // signAndMarshal signs the data with the appropriate algorithm,
@@ -118,8 +123,8 @@ func signAndMarshal(k Signer, rand io.Reader, data []byte) ([]byte, error) {
 	return serializeSignature(k.PublicKey().PrivateKeyAlgo(), sig), nil
 }
 
-// Handshake performs an SSH transport and client authentication on the given ServerConn.
-func (s *ServerConn) Handshake() error {
+// handshake performs key exchange and user authentication.
+func (s *ServerConn) handshake() error {
 	if len(s.config.hostKeys) == 0 {
 		return errors.New("ssh: server has no host keys")
 	}
@@ -420,44 +425,4 @@ func (s *ServerConn) Accept() (NewChannel, error) {
 		return nil, io.EOF
 	}
 	return in, nil
-}
-
-// A Listener implements a network listener (net.Listener) for SSH connections.
-type Listener struct {
-	listener net.Listener
-	config   *ServerConfig
-}
-
-// Addr returns the listener's network address.
-func (l *Listener) Addr() net.Addr {
-	return l.listener.Addr()
-}
-
-// Close closes the listener.
-func (l *Listener) Close() error {
-	return l.listener.Close()
-}
-
-// Accept waits for and returns the next incoming SSH connection.
-// The receiver should call Handshake() in another goroutine
-// to avoid blocking the accepter.
-func (l *Listener) Accept() (*ServerConn, error) {
-	c, err := l.listener.Accept()
-	if err != nil {
-		return nil, err
-	}
-	return Server(c, l.config), nil
-}
-
-// Listen creates an SSH listener accepting connections on
-// the given network address using net.Listen.
-func Listen(network, addr string, config *ServerConfig) (*Listener, error) {
-	l, err := net.Listen(network, addr)
-	if err != nil {
-		return nil, err
-	}
-	return &Listener{
-		l,
-		config,
-	}, nil
 }

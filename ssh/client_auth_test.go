@@ -9,6 +9,7 @@ import (
 	"crypto/dsa"
 	"io/ioutil"
 	"math/big"
+	"net"
 	"strings"
 	"testing"
 
@@ -159,19 +160,19 @@ func init() {
 // the loopback interface. The server exits after
 // processing one handshake.
 func newMockAuthServer(t *testing.T) string {
-	l, err := Listen("tcp", "127.0.0.1:0", serverConfig)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("unable to newMockAuthServer: %s", err)
 	}
 	go func() {
 		defer l.Close()
-		c, err := l.Accept()
+		nConn, err := l.Accept()
 		if err != nil {
 			t.Errorf("Unable to accept incoming connection: %v", err)
 			return
 		}
-		defer c.Close()
-		if err := c.Handshake(); err != nil {
+		defer nConn.Close()
+		if _, err = Server(nConn, serverConfig); err != nil {
 			// not Errorf because this is expected to
 			// fail for some tests.
 			t.Logf("Handshaking error: %v", err)

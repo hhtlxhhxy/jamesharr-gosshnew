@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 
 	"code.google.com/p/gosshnew/ssh/terminal"
@@ -39,15 +40,17 @@ func ExampleListen() {
 
 	// Once a ServerConfig has been configured, connections can be
 	// accepted.
-	listener, err := Listen("tcp", "0.0.0.0:2022", config)
+	listener, err := net.Listen("tcp", "0.0.0.0:2022")
 	if err != nil {
 		panic("failed to listen for connection")
 	}
-	sConn, err := listener.Accept()
+	nConn, err := listener.Accept()
 	if err != nil {
 		panic("failed to accept incoming connection")
 	}
-	if err := sConn.Handshake(); err != nil {
+
+	sConn, err := Server(nConn, config)
+	if err != nil {
 		panic("failed to handshake")
 	}
 
