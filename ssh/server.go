@@ -70,26 +70,49 @@ func (s *ServerConfig) SetRSAPrivateKey(pemBytes []byte) error {
 }
 
 // cachedPubKey contains the results of querying whether a public key is
-// acceptable for a user. The cache only applies to a single ServerConn.
+// acceptable for a user.
 type cachedPubKey struct {
 	user, algo string
 	pubKey     []byte
 	result     bool
 }
 
+func (k1 *cachedPubKey) Equal(k2 *cachedPubKey) bool {
+	return k1.user == k2.user && k1.algo == k2.algo && bytes.Equal(k1.pubKey, k2.pubKey)
+}
+
 const maxCachedPubKeys = 16
+
+// pubKeyCache caches tests for public keys.  Since SSH clients
+// will query whether a public key is acceptable before attempting to
+// authenticate with it, we end up with duplicate queries for public
+// key validity.  The cache only applies to a single ServerConn.
+type pubKeyCache struct {
+	keys []cachedPubKey
+}
+
+// get returns the result for a given user/algo/key tuple.
+func (c *pubKeyCache) get(candidate cachedPubKey) (result bool, ok bool) {
+	for _, k := range c.keys {
+		if k.Equal(&candidate) {
+			return k.result, true
+		}
+	}
+	return false, false
+}
+
+// add adds the given tuple to the cache.
+func (c *pubKeyCache) add(candidate cachedPubKey) {
+	if len(c.keys) < maxCachedPubKeys {
+		c.keys = append(c.keys, candidate)
+	}
+}
 
 // A ServerConn represents an incoming connection.
 type ServerConn struct {
 	transport *handshakeTransport
 	config    *ServerConfig
 	sshConn
-
-	// cachedPubKeys contains the cache results of tests for public keys.
-	// Since SSH clients will query whether a public key is acceptable
-	// before attempting to authenticate with it, we end up with duplicate
-	// queries for public key validity.
-	cachedPubKeys []cachedPubKey
 
 	// The connection protocol.
 	mux *mux
@@ -192,37 +215,11 @@ func (s *ServerConn) handleGlobalRequests() {
 	}
 }
 
-// testPubKey returns true if the given public key is acceptable for the user.
-func (s *ServerConn) testPubKey(algo string, pubKey []byte) bool {
-	if s.config.PublicKeyCallback == nil || !isAcceptableAlgo(algo) {
-		return false
-	}
-
-	for _, c := range s.cachedPubKeys {
-		if c.user == s.user && c.algo == algo && bytes.Equal(c.pubKey, pubKey) {
-			return c.result
-		}
-	}
-
-	result := s.config.PublicKeyCallback(s, algo, pubKey)
-	if len(s.cachedPubKeys) < maxCachedPubKeys {
-		c := cachedPubKey{
-			user:   s.user,
-			algo:   algo,
-			pubKey: make([]byte, len(pubKey)),
-			result: result,
-		}
-		copy(c.pubKey, pubKey)
-		s.cachedPubKeys = append(s.cachedPubKeys, c)
-	}
-
-	return result
-}
-
 func (s *ServerConn) authenticate() error {
 	var userAuthReq userAuthRequestMsg
 	var err error
 	var packet []byte
+	var cache pubKeyCache
 
 userAuthLoop:
 	for {
@@ -284,18 +281,34 @@ userAuthLoop:
 				return ParseError{msgUserAuthRequest}
 			}
 			algo := string(algoBytes)
+			if !isAcceptableAlgo(algo) {
+				break
+			}
 
 			pubKey, payload, ok := parseString(payload)
 			if !ok {
 				return ParseError{msgUserAuthRequest}
 			}
+
+			candidate := cachedPubKey{
+				user:   s.user,
+				algo:   algo,
+				pubKey: pubKey,
+			}
+			candidate.result, ok = cache.get(candidate)
+			if !ok {
+				candidate.result = s.config.PublicKeyCallback(s, candidate.algo, candidate.pubKey)
+				cache.add(candidate)
+			}
+
 			if isQuery {
 				// The client can query if the given public key
 				// would be okay.
 				if len(payload) > 0 {
 					return ParseError{msgUserAuthRequest}
 				}
-				if s.testPubKey(algo, pubKey) {
+
+				if candidate.result {
 					okMsg := userAuthPubKeyOkMsg{
 						Algo:   algo,
 						PubKey: string(pubKey),
@@ -315,7 +328,7 @@ userAuthLoop:
 				// algorithm name that corresponds to algo with
 				// sig.Format.  This is usually the same, but
 				// for certs, the names differ.
-				if !isAcceptableAlgo(algo) || !isAcceptableAlgo(sig.Format) || pubAlgoToPrivAlgo(algo) != sig.Format {
+				if !isAcceptableAlgo(sig.Format) || pubAlgoToPrivAlgo(algo) != sig.Format {
 					break
 				}
 				signedData := buildDataSignedForAuth(s.transport.getSessionID(), userAuthReq, algoBytes, pubKey)
@@ -327,8 +340,9 @@ userAuthLoop:
 				if !key.Verify(signedData, sig.Blob) {
 					return errors.New("ssh: signature verification failed")
 				}
+
 				// TODO(jmpittman): Implement full validation for certificates.
-				if s.testPubKey(algo, pubKey) {
+				if candidate.result {
 					break userAuthLoop
 				}
 			}
