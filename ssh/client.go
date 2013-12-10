@@ -110,7 +110,7 @@ func (c *ClientConn) handleGlobalRequests(incoming chan *Request) {
 }
 
 // Handle channel open messages from the remote side.
-func (c *ClientConn) handleChannelOpens(in chan *channel) {
+func (c *ClientConn) handleChannelOpens(in chan NewChannel) {
 	for ch := range in {
 		c.handleChannelOpen(ch)
 	}

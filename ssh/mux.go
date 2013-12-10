@@ -89,7 +89,7 @@ type mux struct {
 	conn     packetConn
 	chanList chanList
 
-	incomingChannels chan *channel
+	incomingChannels chan NewChannel
 
 	globalSentMu     sync.Mutex
 	globalResponses  chan interface{}
@@ -117,7 +117,7 @@ func (m *mux) Wait() error {
 func newMux(p packetConn) *mux {
 	m := &mux{
 		conn:             p,
-		incomingChannels: make(chan *channel, 16),
+		incomingChannels: make(chan NewChannel, 16),
 		globalResponses:  make(chan interface{}, 1),
 		incomingRequests: make(chan *Request, 16),
 		errCond:          newCond(),
