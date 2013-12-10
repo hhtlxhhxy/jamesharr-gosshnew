@@ -17,9 +17,6 @@ type ClientConn struct {
 	config      *ClientConfig
 	forwardList // forwarded tcpip connections from the remote side
 
-	// Address as passed to the Dial function.
-	dialAddress string
-
 	mux *mux
 }
 
@@ -32,12 +29,11 @@ func clientWithAddress(c net.Conn, addr string, config *ClientConfig) (*ClientCo
 	fullConf := *config
 	fullConf.setDefaults()
 	conn := &ClientConn{
-		sshConn:     sshConn{conn: c},
-		config:      &fullConf,
-		dialAddress: addr,
+		sshConn: sshConn{conn: c},
+		config:  &fullConf,
 	}
 
-	if err := conn.handshake(); err != nil {
+	if err := conn.handshake(addr); err != nil {
 		c.Close()
 		return nil, fmt.Errorf("ssh: handshake failed: %v", err)
 	}
@@ -52,7 +48,7 @@ func clientWithAddress(c net.Conn, addr string, config *ClientConfig) (*ClientCo
 }
 
 // handshake performs the client side key exchange. See RFC 4253 Section 7.
-func (c *ClientConn) handshake() error {
+func (c *ClientConn) handshake(dialAddr string) error {
 	c.clientVersion = []byte(packageVersion)
 	if c.config.ClientVersion != "" {
 		c.clientVersion = []byte(c.config.ClientVersion)
@@ -66,7 +62,7 @@ func (c *ClientConn) handshake() error {
 
 	c.transport = newClientTransport(
 		newTransport(c.sshConn.conn, c.config.Rand, true /* is client */),
-		c.clientVersion, c.serverVersion, c.config, c.dialAddress, c.sshConn.RemoteAddr())
+		c.clientVersion, c.serverVersion, c.config, dialAddr, c.sshConn.RemoteAddr())
 	if err := c.transport.requestKeyChange(); err != nil {
 		return err
 	}
