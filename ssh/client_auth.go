@@ -331,49 +331,6 @@ func handleAuthResponse(c packetConn) (bool, []string, error) {
 	panic("unreachable")
 }
 
-// ClientAuthAgent returns a ClientAuth using public key authentication via
-// an agent.
-func ClientAuthAgent(agent *AgentClient) ClientAuth {
-	return ClientAuthKeyring(&agentKeyring{agent: agent})
-}
-
-// agentKeyring implements ClientKeyring.
-type agentKeyring struct {
-	agent *AgentClient
-}
-
-type agentKeyringSigner struct {
-	agent *AgentClient
-	pub   PublicKey
-}
-
-func (s *agentKeyringSigner) PublicKey() PublicKey {
-	return s.pub
-}
-
-func (s *agentKeyringSigner) Sign(rand io.Reader, data []byte) ([]byte, error) {
-	// The agent has its own entropy source, so the rand argument is ignored.
-	return s.agent.SignRequest(s.pub, data)
-}
-
-func (kr *agentKeyring) Signers() ([]Signer, error) {
-	keys, err := kr.agent.RequestIdentities()
-	if err != nil {
-		return nil, err
-	}
-
-	var result []Signer
-	for _, k := range keys {
-		pub, err := k.Key()
-		if err != nil {
-			// TODO(hanwen): revise this? should never make it into an AgentKey?
-			continue
-		}
-		result = append(result, &agentKeyringSigner{kr.agent, pub})
-	}
-	return result, nil
-}
-
 // ClientKeyboardInteractive should prompt the user for the given
 // questions.
 type ClientKeyboardInteractive interface {

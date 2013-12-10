@@ -2,15 +2,25 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package ssh
+/*
+  Package agent implements a client to an ssh-agent daemon.
+
+References:
+  [PROTOCOL.agent]:    http://www.openbsd.org/cgi-bin/cvsweb/src/usr.bin/ssh/PROTOCOL.agent
+*/
+package agent
 
 import (
+	"crypto/rsa"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"sync"
+
+	"code.google.com/p/gosshnew/ssh"
 )
 
 // See [PROTOCOL.agent], section 3.
@@ -90,12 +100,12 @@ type AgentKey struct {
 // String returns the storage form of an agent key with the format, base64
 // encoded serialized key, and the comment if it is not empty.
 func (ak *AgentKey) String() string {
-	algo, _, ok := parseString(ak.blob)
+	k, _, ok := ssh.ParsePublicKey(ak.blob)
 	if !ok {
 		return "ssh: malformed key"
 	}
 
-	s := string(algo) + " " + base64.StdEncoding.EncodeToString(ak.blob)
+	s := string(k.PublicKeyAlgo()) + " " + base64.StdEncoding.EncodeToString(ak.blob)
 
 	if ak.Comment != "" {
 		s += " " + ak.Comment
@@ -105,55 +115,59 @@ func (ak *AgentKey) String() string {
 }
 
 // Key returns an agent's public key as one of the supported key or certificate types.
-func (ak *AgentKey) Key() (PublicKey, error) {
-	if key, _, ok := ParsePublicKey(ak.blob); ok {
+func (ak *AgentKey) Key() (ssh.PublicKey, error) {
+	if key, _, ok := ssh.ParsePublicKey(ak.blob); ok {
 		return key, nil
 	}
 	return nil, errors.New("ssh: failed to parse key blob")
 }
 
-func parseAgentKey(in []byte) (out *AgentKey, rest []byte, ok bool) {
-	ak := new(AgentKey)
-
-	if ak.blob, in, ok = parseString(in); !ok {
-		return
+func parseAgentKey(in []byte) (out *AgentKey, rest []byte, err error) {
+	type parseHelper struct {
+		Blob    []byte
+		Comment string
+		Rest    []byte `ssh:"rest"`
 	}
 
-	comment, in, ok := parseString(in)
-	if !ok {
-		return
+	ak := new(parseHelper)
+	if err := ssh.Unmarshal(in, ak); err != nil {
+		return nil, nil, err
 	}
-	ak.Comment = string(comment)
 
-	return ak, in, true
+	return &AgentKey{ak.Blob, ak.Comment}, ak.Rest, nil
 }
 
-// AgentClient provides a means to communicate with an ssh agent process based
-// on the protocol described in [PROTOCOL.agent]?rev=1.6.
+// AgentClient is a client for an ssh-agent process.
 type AgentClient struct {
 	// conn is typically represented by using a *net.UnixConn
-	conn io.ReadWriter
+	conn io.ReadWriteCloser
 	// mu is used to prevent concurrent access to the agent
 	mu sync.Mutex
 }
 
 // NewAgentClient creates and returns a new *AgentClient using the
 // passed in io.ReadWriter as a connection to a ssh agent.
-func NewAgentClient(rw io.ReadWriter) *AgentClient {
-	return &AgentClient{conn: rw}
+func NewAgentClient(rwc io.ReadWriteCloser) *AgentClient {
+	return &AgentClient{conn: rwc}
 }
 
-// sendAndReceive sends req to the agent and waits for a reply. On success,
-// the reply is unmarshaled into reply and replyType is set to the first byte of
+func (c *AgentClient) Close() error {
+	// Not really needed for network connections, but oh well.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn.Close()
+}
+
+// call sends an RPC to the agent. On success, the reply is
+// unmarshaled into reply and replyType is set to the first byte of
 // the reply, which contains the type of the message.
-func (ac *AgentClient) sendAndReceive(req []byte) (reply interface{}, err error) {
-	// ac.mu prevents multiple, concurrent requests. Since the agent is typically
-	// on the same machine, we don't attempt to pipeline the requests.
+func (ac *AgentClient) call(req []byte) (reply interface{}, err error) {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
 
-	msg := make([]byte, stringLength(len(req)))
-	marshalString(msg, req)
+	msg := make([]byte, 4+len(req))
+	binary.BigEndian.PutUint32(msg, uint32(len(req)))
+	copy(msg[4:], req)
 	if _, err = ac.conn.Write(msg); err != nil {
 		return
 	}
@@ -162,8 +176,7 @@ func (ac *AgentClient) sendAndReceive(req []byte) (reply interface{}, err error)
 	if _, err = io.ReadFull(ac.conn, respSizeBuf[:]); err != nil {
 		return
 	}
-	respSize, _, _ := parseUint32(respSizeBuf[:])
-
+	respSize := binary.BigEndian.Uint32(respSizeBuf[:])
 	if respSize > maxAgentResponseBytes {
 		err = errors.New("ssh: agent reply too large")
 		return
@@ -173,15 +186,15 @@ func (ac *AgentClient) sendAndReceive(req []byte) (reply interface{}, err error)
 	if _, err = io.ReadFull(ac.conn, buf); err != nil {
 		return
 	}
-	return unmarshalAgentMsg(buf)
+	return unmarshal(buf)
 }
 
-// RequestIdentities queries the agent for protocol 2 keys as defined in
-// [PROTOCOL.agent] section 2.5.2.
-func (ac *AgentClient) RequestIdentities() ([]*AgentKey, error) {
+// List returns the identities known to the agent.
+func (ac *AgentClient) List() ([]*AgentKey, error) {
+	// see [PROTOCOL.agent] section 2.5.2.
 	req := []byte{agentRequestIdentities}
 
-	msg, err := ac.sendAndReceive(req)
+	msg, err := ac.call(req)
 	if err != nil {
 		return nil, err
 	}
@@ -195,9 +208,9 @@ func (ac *AgentClient) RequestIdentities() ([]*AgentKey, error) {
 		data := msg.Keys
 		for i := uint32(0); i < msg.NumKeys; i++ {
 			var key *AgentKey
-			var ok bool
-			if key, data, ok = parseAgentKey(data); !ok {
-				return nil, ParseError{agentIdentitiesAnswer}
+			var err error
+			if key, data, err = parseAgentKey(data); err != nil {
+				return nil, err
 			}
 			keys[i] = key
 		}
@@ -208,15 +221,15 @@ func (ac *AgentClient) RequestIdentities() ([]*AgentKey, error) {
 	panic("unreachable")
 }
 
-// SignRequest requests the signing of data by the agent using a protocol 2 key
-// as defined in [PROTOCOL.agent] section 2.6.2.
-func (ac *AgentClient) SignRequest(key PublicKey, data []byte) ([]byte, error) {
-	req := Marshal(signRequestAgentMsg{
-		KeyBlob: MarshalPublicKey(key),
+// Sign has the agent sign the data using a protocol 2 key as defined
+// in [PROTOCOL.agent] section 2.6.2.
+func (ac *AgentClient) Sign(key ssh.PublicKey, data []byte) ([]byte, error) {
+	req := ssh.Marshal(signRequestAgentMsg{
+		KeyBlob: ssh.MarshalPublicKey(key),
 		Data:    data,
 	})
 
-	msg, err := ac.sendAndReceive(req)
+	msg, err := ac.call(req)
 	if err != nil {
 		return nil, err
 	}
@@ -230,11 +243,11 @@ func (ac *AgentClient) SignRequest(key PublicKey, data []byte) ([]byte, error) {
 	panic("unreachable")
 }
 
-// unmarshalAgentMsg parses an agent message in packet, returning the parsed
+// unmarshal parses an agent message in packet, returning the parsed
 // form and the message type of packet.
-func unmarshalAgentMsg(packet []byte) (interface{}, error) {
+func unmarshal(packet []byte) (interface{}, error) {
 	if len(packet) < 1 {
-		return nil, ParseError{0}
+		return nil, ssh.ParseError{0}
 	}
 	var msg interface{}
 	switch packet[0] {
@@ -247,9 +260,9 @@ func unmarshalAgentMsg(packet []byte) (interface{}, error) {
 	case agentSignResponse:
 		msg = new(signResponseAgentMsg)
 	default:
-		return nil, UnexpectedMessageError{0, packet[0]}
+		return nil, ssh.UnexpectedMessageError{0, packet[0]}
 	}
-	if err := Unmarshal(packet, msg); err != nil {
+	if err := ssh.Unmarshal(packet, msg); err != nil {
 		return nil, err
 	}
 	return msg, nil
@@ -268,11 +281,13 @@ type rsaKeyMsg struct {
 	Comments string
 }
 
-func (ac *AgentClient) insert(s Signer, comment string) error {
+// Insert adds a private key to the agent. Currently, only
+// *rsa.PrivateKey is supported.
+func (ac *AgentClient) Insert(s interface{}, comment string) error {
 	switch k := s.(type) {
-	case *rsaPrivateKey:
-		req := Marshal(rsaKeyMsg{
-			Type:     KeyAlgoRSA,
+	case *rsa.PrivateKey:
+		req := ssh.Marshal(rsaKeyMsg{
+			Type:     ssh.KeyAlgoRSA,
 			N:        k.N,
 			E:        big.NewInt(int64(k.E)),
 			D:        k.D,
@@ -281,7 +296,7 @@ func (ac *AgentClient) insert(s Signer, comment string) error {
 			Q:        k.Primes[1],
 			Comments: comment,
 		})
-		resp, err := ac.sendAndReceive(req)
+		resp, err := ac.call(req)
 		if err != nil {
 			return err
 		}
@@ -291,4 +306,50 @@ func (ac *AgentClient) insert(s Signer, comment string) error {
 		return errors.New("ssh: failure")
 	}
 	return fmt.Errorf("ssh: unsupported key type %T", s)
+}
+
+type agentKeyringSigner struct {
+	agent *AgentClient
+	pub   ssh.PublicKey
+}
+
+func (s *agentKeyringSigner) PublicKey() ssh.PublicKey {
+	return s.pub
+}
+
+func (s *agentKeyringSigner) Sign(rand io.Reader, data []byte) ([]byte, error) {
+	// The agent has its own entropy source, so the rand argument is ignored.
+	encoded, err := s.agent.Sign(s.pub, data)
+	if err != nil {
+		return nil, err
+	}
+	// TODO(hanwen): this should move into Sign?
+	var sig struct {
+		Algo string
+		Blob []byte
+	}
+	if err := ssh.Unmarshal(encoded, &sig); err != nil {
+		return nil, err
+	}
+
+	return sig.Blob, nil
+}
+
+// Signers implements the ssh.ClientKeyring interface.
+func (c *AgentClient) Signers() ([]ssh.Signer, error) {
+	keys, err := c.List()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []ssh.Signer
+	for _, k := range keys {
+		pub, err := k.Key()
+		if err != nil {
+			// TODO(hanwen): revise this? should never make it into an AgentKey?
+			continue
+		}
+		result = append(result, &agentKeyringSigner{c, pub})
+	}
+	return result, nil
 }
