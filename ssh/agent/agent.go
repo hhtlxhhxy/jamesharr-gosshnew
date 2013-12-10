@@ -151,6 +151,7 @@ func NewAgentClient(rwc io.ReadWriteCloser) *AgentClient {
 	return &AgentClient{conn: rwc}
 }
 
+// Close closes the connection to the daemon.
 func (c *AgentClient) Close() error {
 	// Not really needed for network connections, but oh well.
 	c.mu.Lock()
