@@ -19,7 +19,7 @@ import (
 // Listen requests the remote peer open a listening socket
 // on addr. Incoming connections will be available by calling
 // Accept on the returned net.Listener.
-func (c *ClientConn) Listen(n, addr string) (net.Listener, error) {
+func (c *Client) Listen(n, addr string) (net.Listener, error) {
 	laddr, err := net.ResolveTCPAddr(n, addr)
 	if err != nil {
 		return nil, err
@@ -59,7 +59,7 @@ func isBrokenOpenSSHVersion(versionStr string) bool {
 
 // autoPortListenWorkaround simulates automatic port allocation by
 // trying random ports repeatedly.
-func (c *ClientConn) autoPortListenWorkaround(laddr *net.TCPAddr) (net.Listener, error) {
+func (c *Client) autoPortListenWorkaround(laddr *net.TCPAddr) (net.Listener, error) {
 	var sshListener net.Listener
 	var err error
 	const tries = 10
@@ -84,8 +84,8 @@ type channelForwardMsg struct {
 // ListenTCP requests the remote peer open a listening socket
 // on laddr. Incoming connections will be available by calling
 // Accept on the returned net.Listener.
-func (c *ClientConn) ListenTCP(laddr *net.TCPAddr) (net.Listener, error) {
-	if laddr.Port == 0 && isBrokenOpenSSHVersion(string(c.serverVersion)) {
+func (c *Client) ListenTCP(laddr *net.TCPAddr) (net.Listener, error) {
+	if laddr.Port == 0 && isBrokenOpenSSHVersion(string(c.ServerVersion())) {
 		return c.autoPortListenWorkaround(laddr)
 	}
 
@@ -94,7 +94,7 @@ func (c *ClientConn) ListenTCP(laddr *net.TCPAddr) (net.Listener, error) {
 		uint32(laddr.Port),
 	}
 	// send message
-	ok, resp, err := c.mux.SendRequest("tcpip-forward", true, Marshal(m))
+	ok, resp, err := c.SendRequest("tcpip-forward", true, Marshal(m))
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +189,7 @@ func (l *forwardList) lookup(addr net.TCPAddr) (chan forward, bool) {
 type tcpListener struct {
 	laddr *net.TCPAddr
 
-	conn *ClientConn
+	conn *Client
 	in   <-chan forward
 }
 
@@ -215,7 +215,7 @@ func (l *tcpListener) Close() error {
 
 	// this also closes the listener.
 	l.conn.forwardList.remove(*l.laddr)
-	ok, _, err := l.conn.mux.SendRequest("cancel-tcpip-forward", true, Marshal(m))
+	ok, _, err := l.conn.SendRequest("cancel-tcpip-forward", true, Marshal(m))
 	if err == nil && !ok {
 		err = errors.New("ssh: cancel-tcpip-forward failed")
 	}
@@ -229,7 +229,7 @@ func (l *tcpListener) Addr() net.Addr {
 
 // Dial initiates a connection to the addr from the remote host.
 // The resulting connection has a zero LocalAddr() and RemoteAddr().
-func (c *ClientConn) Dial(n, addr string) (net.Conn, error) {
+func (c *Client) Dial(n, addr string) (net.Conn, error) {
 	// Parse the address into host and numeric port.
 	host, portString, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -258,7 +258,7 @@ func (c *ClientConn) Dial(n, addr string) (net.Conn, error) {
 // DialTCP connects to the remote address raddr on the network net,
 // which must be "tcp", "tcp4", or "tcp6".  If laddr is not nil, it is used
 // as the local address for the connection.
-func (c *ClientConn) DialTCP(n string, laddr, raddr *net.TCPAddr) (net.Conn, error) {
+func (c *Client) DialTCP(n string, laddr, raddr *net.TCPAddr) (net.Conn, error) {
 	if laddr == nil {
 		laddr = &net.TCPAddr{
 			IP:   net.IPv4zero,
@@ -284,15 +284,15 @@ type channelOpenDirectMsg struct {
 	lport uint32
 }
 
-func (c *ClientConn) dial(laddr string, lport int, raddr string, rport int) (Channel, error) {
+func (c *Client) dial(laddr string, lport int, raddr string, rport int) (Channel, error) {
 	msg := channelOpenDirectMsg{
 		raddr: raddr,
 		rport: uint32(rport),
 		laddr: laddr,
 		lport: uint32(lport),
 	}
-	ch, err := c.mux.OpenChannel("direct-tcpip", Marshal(msg))
-	go DiscardIncoming(ch.incomingRequests)
+	ch, in, err := c.OpenChannel("direct-tcpip", Marshal(msg))
+	go DiscardIncoming(in)
 	return ch, err
 }
 

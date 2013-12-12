@@ -172,11 +172,10 @@ func newMockAuthServer(t *testing.T) string {
 			return
 		}
 		defer nConn.Close()
-		if _, err = Server(nConn, serverConfig); err != nil {
+		if _, err = newServer(nConn, serverConfig); err != nil {
 			// not Errorf because this is expected to
 			// fail for some tests.
 			t.Logf("Handshaking error: %v", err)
-			return
 		}
 	}()
 	return l.Addr().String()

@@ -10,48 +10,51 @@ import (
 	"net"
 )
 
-// ClientConn represents the client side of an SSH connection.
-type ClientConn struct {
-	sshConn
-	transport   rekeyingTransport
-	config      *ClientConfig
+// Client implements a traditional SSH client supporting shells,
+// subprocesses, port forwarding and tunneled dialing.
+type Client struct {
+	Conn
 	forwardList // forwarded tcpip connections from the remote side
-
-	mux *mux
 }
 
-// Client returns a new SSH client connection using c as the underlying transport.
-func Client(c net.Conn, config *ClientConfig) (*ClientConn, error) {
-	return clientWithAddress(c, "", config)
-}
-
-func clientWithAddress(c net.Conn, addr string, config *ClientConfig) (*ClientConn, error) {
-	fullConf := *config
-	fullConf.setDefaults()
-	conn := &ClientConn{
-		sshConn: sshConn{conn: c},
-		config:  &fullConf,
+// NewClient creates a Client on top of the given connection.
+func NewClient(c Conn, chans <-chan NewChannel, reqs <-chan *Request) *Client {
+	conn := &Client{
+		Conn: c,
 	}
 
-	if err := conn.handshake(addr); err != nil {
-		c.Close()
-		return nil, fmt.Errorf("ssh: handshake failed: %v", err)
-	}
-	conn.mux = newMux(conn.transport)
-	go conn.handleGlobalRequests(conn.mux.incomingRequests)
-	go conn.handleChannelOpens(conn.mux.incomingChannels)
+	go conn.handleGlobalRequests(reqs)
+	go conn.handleChannelOpens(chans)
 	go func() {
-		conn.mux.Wait()
+		conn.Wait()
 		conn.forwardList.closeAll()
 	}()
-	return conn, nil
+	return conn
+}
+
+// NewClientConn establishes an authenticated SSH connection using c
+// as the underlying transport.  The Request and NewChannel channels
+// must be serviced, or the connection will hang.
+func NewClientConn(c net.Conn, addr string, config *ClientConfig) (Conn, <-chan NewChannel, <-chan *Request, error) {
+	fullConf := *config
+	fullConf.setDefaults()
+	conn := &connection{
+		sshConn: sshConn{conn: c},
+	}
+
+	if err := conn.clientHandshake(addr, &fullConf); err != nil {
+		c.Close()
+		return nil, nil, nil, fmt.Errorf("ssh: handshake failed: %v", err)
+	}
+	conn.mux = newMux(conn.transport)
+	return conn, conn.mux.incomingChannels, conn.mux.incomingRequests, nil
 }
 
 // handshake performs the client side key exchange. See RFC 4253 Section 7.
-func (c *ClientConn) handshake(dialAddr string) error {
+func (c *connection) clientHandshake(dialAddress string, config *ClientConfig) error {
 	c.clientVersion = []byte(packageVersion)
-	if c.config.ClientVersion != "" {
-		c.clientVersion = []byte(c.config.ClientVersion)
+	if config.ClientVersion != "" {
+		c.clientVersion = []byte(config.ClientVersion)
 	}
 
 	var err error
@@ -61,8 +64,8 @@ func (c *ClientConn) handshake(dialAddr string) error {
 	}
 
 	c.transport = newClientTransport(
-		newTransport(c.sshConn.conn, c.config.Rand, true /* is client */),
-		c.clientVersion, c.serverVersion, c.config, dialAddr, c.sshConn.RemoteAddr())
+		newTransport(c.sshConn.conn, config.Rand, true /* is client */),
+		c.clientVersion, c.serverVersion, config, dialAddress, c.sshConn.RemoteAddr())
 	if err := c.transport.requestKeyChange(); err != nil {
 		return err
 	}
@@ -72,7 +75,7 @@ func (c *ClientConn) handshake(dialAddr string) error {
 	} else if packet[0] != msgNewKeys {
 		return UnexpectedMessageError{msgNewKeys, packet[0]}
 	}
-	return c.authenticate()
+	return c.clientAuthenticate(config)
 }
 
 // verifyHostKeySignature verifies the host key obtained in the key
@@ -97,7 +100,7 @@ func verifyHostKeySignature(hostKeyAlgo string, result *kexResult) error {
 	return nil
 }
 
-func (c *ClientConn) handleGlobalRequests(incoming chan *Request) {
+func (c *Client) handleGlobalRequests(incoming <-chan *Request) {
 	for r := range incoming {
 		// This handles keepalive messages and matches
 		// the behaviour of OpenSSH.
@@ -106,13 +109,13 @@ func (c *ClientConn) handleGlobalRequests(incoming chan *Request) {
 }
 
 // Handle channel open messages from the remote side.
-func (c *ClientConn) handleChannelOpens(in chan NewChannel) {
+func (c *Client) handleChannelOpens(in <-chan NewChannel) {
 	for ch := range in {
 		c.handleChannelOpen(ch)
 	}
 }
 
-func (c *ClientConn) handleChannelOpen(newCh NewChannel) {
+func (c *Client) handleChannelOpen(newCh NewChannel) {
 	switch newCh.ChannelType() {
 	case "forwarded-tcpip":
 		laddr, rest, ok := parseTCPAddr(newCh.ExtraData())
@@ -147,15 +150,6 @@ func (c *ClientConn) handleChannelOpen(newCh NewChannel) {
 	}
 }
 
-// DiscardIncoming rejects all incoming requests.
-func DiscardIncoming(in <-chan *Request) {
-	for req := range in {
-		if req.WantReply {
-			req.Reply(false, nil)
-		}
-	}
-}
-
 // parseTCPAddr parses the originating address from the remote into a *net.TCPAddr.
 // RFC 4254 section 7.2 is mute on what to do if parsing fails but the forwardlist
 // requires a valid *net.TCPAddr to operate, so we enforce that restriction here.
@@ -175,17 +169,22 @@ func parseTCPAddr(b []byte) (*net.TCPAddr, []byte, bool) {
 	return &net.TCPAddr{IP: ip, Port: int(port)}, b, true
 }
 
-// Dial connects to the given network address using net.Dial and
-// then initiates a SSH handshake, returning the resulting client connection.
-func Dial(network, addr string, config *ClientConfig) (*ClientConn, error) {
+// Dial starts a client connecting to the given SSH server. It is a
+// convenience function that connects to the given network address,
+// initiates the SSH handshake, and then sets up a Client.
+func Dial(network, addr string, config *ClientConfig) (*Client, error) {
 	conn, err := net.Dial(network, addr)
 	if err != nil {
 		return nil, err
 	}
-	return clientWithAddress(conn, addr, config)
+	c, chans, reqs, err := NewClientConn(conn, addr, config)
+	if err != nil {
+		return nil, err
+	}
+	return NewClient(c, chans, reqs), nil
 }
 
-// A ClientConfig structure is used to configure a ClientConn. After one has
+// A ClientConfig structure is used to configure a Client. After one has
 // been passed to an SSH function it must not be modified.
 type ClientConfig struct {
 	// Shared configuration.

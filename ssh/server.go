@@ -108,31 +108,32 @@ func (c *pubKeyCache) add(candidate cachedPubKey) {
 	}
 }
 
-// A ServerConn represents an incoming connection.
-type ServerConn struct {
-	transport *handshakeTransport
-	config    *ServerConfig
-	sshConn
+// TODO(hanwen): should this be an interface or a struct?
 
-	// The connection protocol.
-	mux *mux
+// ServerConn is an authenticated SSH connection, as seen from the
+// server
+type ServerConn struct {
+	Conn
+
+	// TODO(hanwen): add permission data here.
 }
 
-// Server starts an new SSH server on with c as the underlying
+// NewServerConn starts a new SSH server with c as the underlying
 // transport.  It starts with a handshake, and if the handshake is
-// unsuccessful, it closes the connection and returns an error.
-func Server(c net.Conn, config *ServerConfig) (*ServerConn, error) {
+// unsuccessful, it closes the connection and returns an error.  The
+// Request and NewChannel channels must be serviced, or the connection
+// will hang.
+func NewServerConn(c net.Conn, config *ServerConfig) (*ServerConn, <-chan NewChannel, <-chan *Request, error) {
 	fullConf := *config
 	fullConf.setDefaults()
-	s := &ServerConn{
+	s := &connection{
 		sshConn: sshConn{conn: c},
-		config:  &fullConf,
 	}
-	if err := s.handshake(); err != nil {
+	if err := s.serverHandshake(&fullConf); err != nil {
 		c.Close()
-		return nil, err
+		return nil, nil, nil, err
 	}
-	return s, nil
+	return &ServerConn{s}, s.mux.incomingChannels, s.mux.incomingRequests, nil
 }
 
 // signAndMarshal signs the data with the appropriate algorithm,
@@ -147,8 +148,8 @@ func signAndMarshal(k Signer, rand io.Reader, data []byte) ([]byte, error) {
 }
 
 // handshake performs key exchange and user authentication.
-func (s *ServerConn) handshake() error {
-	if len(s.config.hostKeys) == 0 {
+func (s *connection) serverHandshake(config *ServerConfig) error {
+	if len(config.hostKeys) == 0 {
 		return errors.New("ssh: server has no host keys")
 	}
 
@@ -159,8 +160,8 @@ func (s *ServerConn) handshake() error {
 		return err
 	}
 
-	tr := newTransport(s.sshConn.conn, s.config.Rand, false /* not client */)
-	s.transport = newServerTransport(tr, s.clientVersion, s.serverVersion, s.config)
+	tr := newTransport(s.sshConn.conn, config.Rand, false /* not client */)
+	s.transport = newServerTransport(tr, s.clientVersion, s.serverVersion, config)
 
 	if err := s.transport.requestKeyChange(); err != nil {
 		return err
@@ -191,12 +192,10 @@ func (s *ServerConn) handshake() error {
 		return err
 	}
 
-	if err := s.authenticate(); err != nil {
+	if err := s.serverAuthenticate(config); err != nil {
 		return err
 	}
 	s.mux = newMux(s.transport)
-	go s.handleGlobalRequests()
-
 	return err
 }
 
@@ -209,13 +208,7 @@ func isAcceptableAlgo(algo string) bool {
 	return false
 }
 
-func (s *ServerConn) handleGlobalRequests() {
-	for r := range s.mux.incomingRequests {
-		r.Reply(false, nil)
-	}
-}
-
-func (s *ServerConn) authenticate() error {
+func (s *connection) serverAuthenticate(config *ServerConfig) error {
 	var userAuthReq userAuthRequestMsg
 	var err error
 	var packet []byte
@@ -237,12 +230,12 @@ userAuthLoop:
 		s.user = userAuthReq.User
 		switch userAuthReq.Method {
 		case "none":
-			if s.config.NoClientAuth {
+			if config.NoClientAuth {
 				s.user = ""
 				break userAuthLoop
 			}
 		case "password":
-			if s.config.PasswordCallback == nil {
+			if config.PasswordCallback == nil {
 				break
 			}
 			payload := userAuthReq.Payload
@@ -255,19 +248,19 @@ userAuthLoop:
 				return ParseError{msgUserAuthRequest}
 			}
 
-			if s.config.PasswordCallback(s, password) {
+			if config.PasswordCallback(s, password) {
 				break userAuthLoop
 			}
 		case "keyboard-interactive":
-			if s.config.KeyboardInteractiveCallback == nil {
+			if config.KeyboardInteractiveCallback == nil {
 				break
 			}
 
-			if s.config.KeyboardInteractiveCallback(s, &sshClientKeyboardInteractive{s}) {
+			if config.KeyboardInteractiveCallback(s, &sshClientKeyboardInteractive{s}) {
 				break userAuthLoop
 			}
 		case "publickey":
-			if s.config.PublicKeyCallback == nil {
+			if config.PublicKeyCallback == nil {
 				break
 			}
 			payload := userAuthReq.Payload
@@ -297,7 +290,7 @@ userAuthLoop:
 			}
 			candidate.result, ok = cache.get(candidate)
 			if !ok {
-				candidate.result = s.config.PublicKeyCallback(s, candidate.algo, candidate.pubKey)
+				candidate.result = config.PublicKeyCallback(s, candidate.algo, candidate.pubKey)
 				cache.add(candidate)
 			}
 
@@ -349,13 +342,13 @@ userAuthLoop:
 		}
 
 		var failureMsg userAuthFailureMsg
-		if s.config.PasswordCallback != nil {
+		if config.PasswordCallback != nil {
 			failureMsg.Methods = append(failureMsg.Methods, "password")
 		}
-		if s.config.PublicKeyCallback != nil {
+		if config.PublicKeyCallback != nil {
 			failureMsg.Methods = append(failureMsg.Methods, "publickey")
 		}
-		if s.config.KeyboardInteractiveCallback != nil {
+		if config.KeyboardInteractiveCallback != nil {
 			failureMsg.Methods = append(failureMsg.Methods, "keyboard-interactive")
 		}
 
@@ -379,7 +372,7 @@ userAuthLoop:
 // sshClientKeyboardInteractive implements a ClientKeyboardInteractive by
 // asking the client on the other side of a ServerConn.
 type sshClientKeyboardInteractive struct {
-	*ServerConn
+	*connection
 }
 
 func (c *sshClientKeyboardInteractive) Challenge(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
@@ -429,14 +422,4 @@ func (c *sshClientKeyboardInteractive) Challenge(user, instruction string, quest
 	}
 
 	return answers, nil
-}
-
-// Accept reads and processes messages on a ServerConn. It must be called
-// in order to demultiplex messages to any resulting Channels.
-func (s *ServerConn) Accept() (NewChannel, error) {
-	in, ok := <-s.mux.incomingChannels
-	if !ok {
-		return nil, io.EOF
-	}
-	return in, nil
 }

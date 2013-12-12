@@ -49,10 +49,11 @@ func ExampleListen() {
 		panic("failed to accept incoming connection")
 	}
 
-	sConn, err := Server(nConn, config)
+	_, chans, reqs, err := NewServerConn(nConn, config)
 	if err != nil {
 		panic("failed to handshake")
 	}
+	go DiscardIncoming(reqs)
 
 	// A ServerConn multiplexes several channels, which must
 	// themselves be Accepted.
@@ -62,9 +63,9 @@ func ExampleListen() {
 		// channel request is seen. Some goroutine must always be
 		// calling Accept; otherwise no messages will be forwarded
 		// to the channels.
-		newChannel, err := sConn.Accept()
-		if err != nil {
-			panic("error from Accept")
+		newChannel, ok := <-chans
+		if !ok {
+			break
 		}
 
 		// Channels have a type, depending on the application level

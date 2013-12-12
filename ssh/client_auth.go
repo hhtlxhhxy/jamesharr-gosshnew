@@ -12,7 +12,7 @@ import (
 )
 
 // authenticate authenticates with the remote server. See RFC 4252.
-func (c *ClientConn) authenticate() error {
+func (c *connection) clientAuthenticate(config *ClientConfig) error {
 	// initiate user auth session
 	if err := c.transport.writePacket(Marshal(serviceRequestMsg{serviceUserAuth})); err != nil {
 		return err
@@ -30,7 +30,7 @@ func (c *ClientConn) authenticate() error {
 	// then any untried methods suggested by the server.
 	tried, remain := make(map[string]bool), make(map[string]bool)
 	for auth := ClientAuth(new(noneAuth)); auth != nil; {
-		ok, methods, err := auth.auth(c.transport.getSessionID(), c.config.User, c.transport, c.config.Rand)
+		ok, methods, err := auth.auth(c.transport.getSessionID(), config.User, c.transport, config.Rand)
 		if err != nil {
 			return err
 		}
@@ -48,7 +48,7 @@ func (c *ClientConn) authenticate() error {
 			remain[meth] = true
 		}
 		auth = nil
-		for _, a := range c.config.Auth {
+		for _, a := range config.Auth {
 			if remain[a.method()] {
 				auth = a
 				break

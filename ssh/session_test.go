@@ -21,7 +21,7 @@ import (
 type serverType func(Channel, <-chan *Request, *testing.T)
 
 // dial constructs a new test server and returns a *ClientConn.
-func dial(handler serverType, t *testing.T) *ClientConn {
+func dial(handler serverType, t *testing.T) *Client {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("unable to listen: %v", err)
@@ -34,7 +34,7 @@ func dial(handler serverType, t *testing.T) *ClientConn {
 			return
 		}
 		defer conn.Close()
-		server, err := Server(conn, serverConfig)
+		server, err := newServer(conn, serverConfig)
 		if err != nil {
 			t.Errorf("Unable to handshake: %v", err)
 			return

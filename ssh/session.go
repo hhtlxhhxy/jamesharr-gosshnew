@@ -532,15 +532,17 @@ func (s *Session) StderrPipe() (io.Reader, error) {
 }
 
 // NewSession returns a new interactive session on the remote host.
-func (c *ClientConn) NewSession() (*Session, error) {
-	ch, err := c.mux.OpenChannel("session", nil)
+func (c *Client) NewSession() (*Session, error) {
+	ch, in, err := c.OpenChannel("session", nil)
 	if err != nil {
 		return nil, err
 	}
 
+	// TODO(hanwen): start go-routine servicing channel here, so
+	// we don't block if Wait() is never called.
 	return &Session{
 		ch:               ch,
-		incomingRequests: ch.incomingRequests,
+		incomingRequests: in,
 	}, nil
 }
 

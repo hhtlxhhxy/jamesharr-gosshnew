@@ -25,7 +25,7 @@ func muxPair() (*mux, *mux) {
 func channelPair(t *testing.T) (*channel, *channel, *mux) {
 	c, s := muxPair()
 
-	res := make(chan *channel, 1)
+	res := make(chan NewChannel, 1)
 	go func() {
 		ch, ok := <-s.incomingChannels
 		if !ok {
@@ -40,12 +40,12 @@ func channelPair(t *testing.T) (*channel, *channel, *mux) {
 		res <- ch
 	}()
 
-	ch, err := c.OpenChannel("chan", nil)
+	ch, err := c.openChannel("chan", nil)
 	if err != nil {
 		t.Fatalf("OpenChannel: %v", err)
 	}
 
-	return <-res, ch, c
+	return (<-res).(*channel), ch, c
 }
 
 func TestMuxReadWrite(t *testing.T) {
@@ -184,7 +184,7 @@ func TestMuxReject(t *testing.T) {
 		ch.Reject(RejectionReason(42), "message")
 	}()
 
-	ch, err := client.OpenChannel("ch", []byte("extra"))
+	ch, err := client.openChannel("ch", []byte("extra"))
 	if ch != nil {
 		t.Fatal("openChannel not rejected")
 	}

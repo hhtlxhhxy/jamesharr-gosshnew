@@ -102,8 +102,6 @@ type mux struct {
 // Each new chanList instantiation has a different offset.
 var globalOff uint32
 
-// Wait blocks until the connection has shut down, and returns the
-// error causing the shutdown.
 func (m *mux) Wait() error {
 	m.errCond.L.Lock()
 	defer m.errCond.L.Unlock()
@@ -132,8 +130,6 @@ func (m *mux) sendMessage(msg interface{}) error {
 	return m.conn.writePacket(p)
 }
 
-// SendRequest sends a global request. If wantReply is set, the return
-// includes success status and extra data. See also RFC4254, section 4.
 func (m *mux) SendRequest(name string, wantReply bool, payload []byte) (bool, []byte, error) {
 	if wantReply {
 		m.globalSentMu.Lock()
@@ -332,20 +328,16 @@ func (m *mux) handleChannelOpen(packet []byte) error {
 	return nil
 }
 
-// OpenChannelError is returned the other side rejects our OpenChannel
-// request.
-type OpenChannelError struct {
-	Reason  RejectionReason
-	Message string
+func (m *mux) OpenChannel(chanType string, extra []byte) (Channel, <-chan *Request, error) {
+	ch, err := m.openChannel(chanType, extra)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return ch, ch.incomingRequests, nil
 }
 
-func (e *OpenChannelError) Error() string {
-	return fmt.Sprintf("ssh: rejected: %s (%s)", e.Reason, e.Message)
-}
-
-// OpenChannel asks for a new channel. If the other side rejects, it
-// returns a *OpenChannelError.
-func (m *mux) OpenChannel(chanType string, extra []byte) (*channel, error) {
+func (m *mux) openChannel(chanType string, extra []byte) (*channel, error) {
 	ch := m.newChannel(chanType, extra)
 
 	ch.maxPayload = channelMaxPacket

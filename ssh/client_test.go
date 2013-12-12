@@ -7,6 +7,7 @@ import (
 
 func testClientVersion(t *testing.T, config *ClientConfig, expected string) {
 	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
 	receivedVersion := make(chan string, 1)
 	go func() {
 		version, err := readVersion(serverConn)
@@ -17,7 +18,7 @@ func testClientVersion(t *testing.T, config *ClientConfig, expected string) {
 		}
 		serverConn.Close()
 	}()
-	Client(clientConn, config)
+	NewClientConn(clientConn, "", config)
 	actual := <-receivedVersion
 	if actual != expected {
 		t.Fatalf("got %s; want %s", actual, expected)

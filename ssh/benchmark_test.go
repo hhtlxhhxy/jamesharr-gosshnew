@@ -7,10 +7,33 @@ package ssh
 import (
 	"errors"
 	"io"
+	"net"
 	"testing"
 )
 
-func sshPipe() (*ClientConn, *ServerConn, error) {
+type server struct {
+	*ServerConn
+	chans <-chan NewChannel
+}
+
+func newServer(c net.Conn, conf *ServerConfig) (*server, error) {
+	sconn, chans, reqs, err := NewServerConn(c, conf)
+	if err != nil {
+		return nil, err
+	}
+	go DiscardIncoming(reqs)
+	return &server{sconn, chans}, nil
+}
+
+func (s *server) Accept() (NewChannel, error) {
+	n, ok := <-s.chans
+	if !ok {
+		return nil, io.EOF
+	}
+	return n, nil
+}
+
+func sshPipe() (Conn, *server, error) {
 	c1, c2, err := netPipe()
 	if err != nil {
 		return nil, nil, err
@@ -23,16 +46,16 @@ func sshPipe() (*ClientConn, *ServerConn, error) {
 		NoClientAuth: true,
 	}
 	serverConf.AddHostKey(ecdsaKey)
-	done := make(chan *ServerConn, 1)
+	done := make(chan *server, 1)
 	go func() {
-		server, err := Server(c2, &serverConf)
+		server, err := newServer(c2, &serverConf)
 		if err != nil {
 			done <- nil
 		}
 		done <- server
 	}()
 
-	client, err := Client(c1, &clientConf)
+	client, _, reqs, err := NewClientConn(c1, "", &clientConf)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -41,6 +64,8 @@ func sshPipe() (*ClientConn, *ServerConn, error) {
 	if server == nil {
 		return nil, nil, errors.New("server handshake failed.")
 	}
+	go DiscardIncoming(reqs)
+
 	return client, server, nil
 }
 
@@ -77,10 +102,11 @@ func BenchmarkEndToEnd(b *testing.B) {
 		done <- 1
 	}()
 
-	ch, err := client.mux.OpenChannel("speed", nil)
+	ch, in, err := client.OpenChannel("speed", nil)
 	if err != nil {
 		b.Fatalf("OpenChannel: %v", err)
 	}
+	go DiscardIncoming(in)
 
 	b.ResetTimer()
 	b.StartTimer()

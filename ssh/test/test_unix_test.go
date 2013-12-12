@@ -175,7 +175,7 @@ func unixConnection() (*net.UnixConn, *net.UnixConn, error) {
 	return c1.(*net.UnixConn), c2.(*net.UnixConn), nil
 }
 
-func (s *server) TryDial(config *ssh.ClientConfig) (*ssh.ClientConn, error) {
+func (s *server) TryDial(config *ssh.ClientConfig) (*ssh.Client, error) {
 	sshd, err := exec.LookPath("sshd")
 	if err != nil {
 		s.t.Skipf("skipping test: %v", err)
@@ -201,10 +201,14 @@ func (s *server) TryDial(config *ssh.ClientConfig) (*ssh.ClientConn, error) {
 		s.t.Fatalf("s.cmd.Start: %v", err)
 	}
 	s.clientConn = c1
-	return ssh.Client(c1, config)
+	conn, chans, reqs, err := ssh.NewClientConn(c1, "", config)
+	if err != nil {
+		return nil, err
+	}
+	return ssh.NewClient(conn, chans, reqs), nil
 }
 
-func (s *server) Dial(config *ssh.ClientConfig) *ssh.ClientConn {
+func (s *server) Dial(config *ssh.ClientConfig) *ssh.Client {
 	conn, err := s.TryDial(config)
 	if err != nil {
 		s.t.Fail()
