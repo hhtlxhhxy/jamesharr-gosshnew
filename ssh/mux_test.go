@@ -25,19 +25,20 @@ func muxPair() (*mux, *mux) {
 func channelPair(t *testing.T) (*channel, *channel, *mux) {
 	c, s := muxPair()
 
-	res := make(chan NewChannel, 1)
+	res := make(chan *channel, 1)
 	go func() {
-		ch, ok := <-s.incomingChannels
+		newCh, ok := <-s.incomingChannels
 		if !ok {
 			t.Fatalf("No incoming channel")
 		}
-		if ch.ChannelType() != "chan" {
-			t.Fatalf("got type %q want chan", ch.ChannelType())
+		if newCh.ChannelType() != "chan" {
+			t.Fatalf("got type %q want chan", newCh.ChannelType())
 		}
-		if _, _, err := ch.Accept(); err != nil {
+		ch, _, err := newCh.Accept()
+		if err != nil {
 			t.Fatalf("Accept %v", err)
 		}
-		res <- ch
+		res <- ch.(*channel)
 	}()
 
 	ch, err := c.openChannel("chan", nil)
@@ -45,7 +46,7 @@ func channelPair(t *testing.T) (*channel, *channel, *mux) {
 		t.Fatalf("OpenChannel: %v", err)
 	}
 
-	return (<-res).(*channel), ch, c
+	return <-res, ch, c
 }
 
 func TestMuxReadWrite(t *testing.T) {
