@@ -335,6 +335,7 @@ type window struct {
 	*sync.Cond
 	win          uint32 // RFC 4254 5.2 says the window size can grow to 2^32-1
 	writeWaiters int
+	closed       bool
 }
 
 // add adds win to the amount of window available
@@ -358,14 +359,24 @@ func (w *window) add(win uint32) bool {
 	return true
 }
 
+// kill sets the window to closed, so all reservations fail
+// immediately.
+func (w *window) kill() {
+	w.L.Lock()
+	w.closed = true
+	w.Broadcast()
+	w.L.Unlock()
+}
+
 // reserve reserves win from the available window capacity.
 // If no capacity remains, reserve will block. reserve may
 // return less than requested.
-func (w *window) reserve(win uint32) uint32 {
+func (w *window) reserve(win uint32) (uint32, error) {
+	var err error
 	w.L.Lock()
 	w.Broadcast()
 	w.writeWaiters++
-	for w.win == 0 {
+	for w.win == 0 && !w.closed {
 		w.Wait()
 	}
 	w.writeWaiters--
@@ -373,8 +384,11 @@ func (w *window) reserve(win uint32) uint32 {
 		win = w.win
 	}
 	w.win -= win
+	if w.closed {
+		err = io.EOF
+	}
 	w.L.Unlock()
-	return win
+	return win, err
 }
 
 // waitWriterBlocked waits until some goroutine is blocked for further

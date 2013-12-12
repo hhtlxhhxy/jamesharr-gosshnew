@@ -205,8 +205,8 @@ func (m *mux) loop() {
 		ch.mu.Unlock()
 		ch.pending.eof()
 		ch.extPending.eof()
-		// Unblock throttled writers. The quantity 1 is arbitrary.
-		ch.remoteWin.add(1)
+		// Unblock throttled writers.
+		ch.remoteWin.kill()
 		close(ch.incomingRequests)
 		// ch.msg is otherwise only called from onePacket, so
 		// this is safe.

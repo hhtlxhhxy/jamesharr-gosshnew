@@ -177,11 +177,6 @@ type channel struct {
 	sentClose bool
 }
 
-func (c *channel) getWindowSpace(max uint32) (uint32, error) {
-	// TODO(hanwen): check if closed?
-	return c.remoteWin.reserve(max), nil
-}
-
 // writePacket sends the packet over the wire. If the packet is a
 // channel close, it updates sentClose. This method takes the lock
 // c.mu.
@@ -221,7 +216,7 @@ func (c *channel) WriteExtended(data []byte, extendedCode uint32) (n int, err er
 
 	for len(data) > 0 {
 		space := min(c.maxPayload, len(data))
-		if space, err = c.getWindowSpace(space); err != nil {
+		if space, err = c.remoteWin.reserve(space); err != nil {
 			return n, err
 		}
 		todo := data[:space]
@@ -342,8 +337,8 @@ func (c *channel) handlePacket(packet []byte) error {
 		close(c.msg)
 		close(c.incomingRequests)
 		c.mux.chanList.remove(c.localId)
-		// Unblock writers. The quantity 1 is arbitrary.
-		c.remoteWin.add(1)
+		// Unblock writers.
+		c.remoteWin.kill()
 
 		return nil
 	case msgChannelEOF:
