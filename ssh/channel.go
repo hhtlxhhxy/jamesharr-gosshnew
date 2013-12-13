@@ -338,7 +338,7 @@ func (c *channel) handlePacket(packet []byte) error {
 		close(c.incomingRequests)
 		c.mux.chanList.remove(c.localId)
 		// Unblock writers.
-		c.remoteWin.kill()
+		c.remoteWin.close()
 
 		return nil
 	case msgChannelEOF:

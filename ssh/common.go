@@ -358,9 +358,9 @@ func (w *window) add(win uint32) bool {
 	return true
 }
 
-// kill sets the window to closed, so all reservations fail
+// close sets the window to closed, so all reservations fail
 // immediately.
-func (w *window) kill() {
+func (w *window) close() {
 	w.L.Lock()
 	w.closed = true
 	w.Broadcast()
