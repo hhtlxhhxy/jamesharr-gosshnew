@@ -167,15 +167,18 @@ func TestAuth(t *testing.T) {
 	}
 
 	go func() {
-		_, err := ssh.Server(a, &serverConf)
+		conn, _, _, err := ssh.NewServerConn(a, &serverConf)
 		if err != nil {
 			t.Fatalf("Server: %v", err)
 		}
+		conn.Close()
 	}()
 
 	conf := ssh.ClientConfig{}
 	conf.Auth = append(conf.Auth, ssh.ClientAuthKeyring(agent))
-	if _, err := ssh.Client(b, &conf); err != nil {
-		t.Fatalf("Client: %v", err)
+	conn, _, _, err := ssh.NewClientConn(b, "", &conf)
+	if err != nil {
+		t.Fatalf("NewClientConn: %v", err)
 	}
+	conn.Close()
 }
