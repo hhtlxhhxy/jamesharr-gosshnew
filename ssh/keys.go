@@ -363,8 +363,11 @@ func (k *dsaPrivateKey) Sign(rand io.Reader, data []byte) ([]byte, error) {
 	}
 
 	sig := make([]byte, 40)
-	copy(sig[:20], r.Bytes())
-	copy(sig[20:], s.Bytes())
+	rb := r.Bytes()
+	sb := s.Bytes()
+
+	copy(sig[20-len(rb):20], rb)
+	copy(sig[40-len(sb):], sb)
 	return sig, nil
 }
 
