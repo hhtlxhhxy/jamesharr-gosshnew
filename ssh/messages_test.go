@@ -108,7 +108,7 @@ func TestUnmarshalUnexpectedPacket(t *testing.T) {
 	}
 	want := UnexpectedMessageError{43, 42}
 	if got, ok := err.(UnexpectedMessageError); !ok || want != got {
-		t.Fatal("expected %q, got %q", want, got)
+		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 

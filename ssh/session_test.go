@@ -39,7 +39,6 @@ func dial(handler serverType, t *testing.T) *Client {
 			t.Errorf("Unable to handshake: %v", err)
 			return
 		}
-		done := make(chan struct{})
 		for {
 			newCh, err := server.Accept()
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
@@ -64,11 +63,9 @@ func dial(handler serverType, t *testing.T) *Client {
 				t.Errorf("Accept: %v", err)
 			}
 			go func() {
-				defer close(done)
 				handler(ch, inReqs, t)
 			}()
 		}
-		<-done
 	}()
 
 	config := &ClientConfig{

@@ -246,7 +246,7 @@ func TestMuxChannelRequest(t *testing.T) {
 	wg.Wait()
 
 	if received != 3 {
-		t.Errorf("got %d requests, want %d", received)
+		t.Errorf("got %d requests, want %d", received, 3)
 	}
 }
 

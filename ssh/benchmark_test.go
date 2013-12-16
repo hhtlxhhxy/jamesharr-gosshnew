@@ -95,7 +95,7 @@ func BenchmarkEndToEnd(b *testing.B) {
 		go DiscardIncoming(incoming)
 		for i := 0; i < b.N; i++ {
 			if _, err := io.ReadFull(ch, output); err != nil {
-				b.Fatalf("ReadFull: %v")
+				b.Fatalf("ReadFull: %v", err)
 			}
 		}
 		ch.Close()
@@ -112,7 +112,7 @@ func BenchmarkEndToEnd(b *testing.B) {
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := ch.Write(input); err != nil {
-			b.Fatalf("WriteFull: %v")
+			b.Fatalf("WriteFull: %v", err)
 		}
 	}
 	ch.Close()
