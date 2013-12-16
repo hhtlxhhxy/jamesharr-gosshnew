@@ -323,23 +323,29 @@ func (c *channel) ReadExtended(data []byte, extended uint32) (n int, err error) 
 	return n, err
 }
 
+func (c *channel) close() {
+	c.pending.eof()
+	c.extPending.eof()
+	close(c.msg)
+	close(c.incomingRequests)
+	c.mu.Lock()
+	// This is not necesary for a normal channel teardown, but if
+	// there was another error, it is.
+	c.sentClose = true
+	c.mu.Unlock()
+	// Unblock writers.
+	c.remoteWin.close()
+}
+
 func (c *channel) handlePacket(packet []byte) error {
 	switch packet[0] {
 	case msgChannelData, msgChannelExtendedData:
 		return c.handleData(packet)
 	case msgChannelClose:
-		// Ack the close.
 		c.sendMessage(channelCloseMsg{
 			PeersId: c.remoteId})
-
-		c.pending.eof()
-		c.extPending.eof()
-		close(c.msg)
-		close(c.incomingRequests)
 		c.mux.chanList.remove(c.localId)
-		// Unblock writers.
-		c.remoteWin.close()
-
+		c.close()
 		return nil
 	case msgChannelEOF:
 		// RFC 4254 is mute on how EOF affects dataExt messages but
@@ -399,7 +405,6 @@ func (m *mux) newChannel(chanType string, extraData []byte) *channel {
 		extraData:        extraData,
 		mux:              m,
 	}
-
 	ch.localId = m.chanList.add(ch)
 	return ch
 }

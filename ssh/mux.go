@@ -196,17 +196,7 @@ func (m *mux) loop() {
 	}
 
 	for _, ch := range m.chanList.dropAll() {
-		ch.mu.Lock()
-		ch.sentClose = true
-		ch.mu.Unlock()
-		ch.pending.eof()
-		ch.extPending.eof()
-		// Unblock throttled writers.
-		ch.remoteWin.close()
-		close(ch.incomingRequests)
-		// ch.msg is otherwise only called from onePacket, so
-		// this is safe.
-		close(ch.msg)
+		ch.close()
 	}
 
 	close(m.incomingChannels)
