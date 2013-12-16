@@ -137,6 +137,8 @@ type Session struct {
 
 	// true if pipe method is active
 	stdinpipe, stdoutpipe, stderrpipe bool
+
+	exitStatus chan error
 }
 
 func (s *Session) Close() error {
@@ -361,7 +363,7 @@ func (s *Session) Wait() error {
 	if !s.started {
 		return errors.New("ssh: session not started")
 	}
-	waitErr := s.wait()
+	waitErr := <-s.exitStatus
 
 	var copyError error
 	for _ = range s.copyFuncs {
@@ -377,7 +379,6 @@ func (s *Session) Wait() error {
 
 func (s *Session) wait() error {
 	wm := Waitmsg{status: -1}
-
 	// Wait for msg channel to be closed before returning.
 	for msg := range s.incomingRequests {
 		switch msg.Type {
@@ -538,12 +539,16 @@ func (c *Client) NewSession() (*Session, error) {
 		return nil, err
 	}
 
-	// TODO(hanwen): start go-routine servicing channel here, so
-	// we don't block if Wait() is never called.
-	return &Session{
+	s := &Session{
 		ch:               ch,
 		incomingRequests: in,
-	}, nil
+	}
+	s.exitStatus = make(chan error, 1)
+	go func() {
+		s.exitStatus <- s.wait()
+	}()
+
+	return s, nil
 }
 
 // An ExitError reports unsuccessful completion of a remote command.
