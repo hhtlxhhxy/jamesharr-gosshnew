@@ -70,8 +70,8 @@ func dial(handler serverType, t *testing.T) *Client {
 
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []ClientAuth{
-			ClientAuthPassword(clientPassword),
+		Auth: []AuthMethod{
+			Password("tiger"),
 		},
 	}
 

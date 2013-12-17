@@ -7,7 +7,6 @@ package ssh
 import (
 	"bytes"
 	"crypto/dsa"
-	"io/ioutil"
 	"math/big"
 	"net"
 	"strings"
@@ -55,45 +54,12 @@ y2VdEyF7DPCZewIhAI7GOI/6LDIFOvtPo6Bj2nNmyQ1HU6k/LRtNIXi4c9NJAiAr
 rrxx26itVhJmcvoUhOjwuzSlP2bE5VHAvkGB352YBg==
 -----END RSA PRIVATE KEY-----`
 
-// keychain implements the ClientKeyring interface
-type keychain struct {
-	keys []Signer
-}
-
-func (k *keychain) Signers() ([]Signer, error) {
-	return k.keys, nil
-}
-
-func (k *keychain) add(key Signer) {
-	k.keys = append(k.keys, key)
-}
-
-func (k *keychain) loadPEM(file string) error {
-	buf, err := ioutil.ReadFile(file)
-	if err != nil {
-		return err
-	}
-	key, err := ParsePrivateKey(buf)
-	if err != nil {
-		return err
-	}
-	k.add(key)
-	return nil
-}
-
-// password implements the ClientPassword interface
-type password string
-
-func (p password) Password(user string) (string, error) {
-	return string(p), nil
-}
-
 type keyboardInteractive map[string]string
 
-func (cr *keyboardInteractive) Challenge(user string, instruction string, questions []string, echos []bool) ([]string, error) {
+func (cr keyboardInteractive) Challenge(user string, instruction string, questions []string, echos []bool) ([]string, error) {
 	var answers []string
 	for _, q := range questions {
-		answers = append(answers, (*cr)[q])
+		answers = append(answers, cr[q])
 	}
 	return answers, nil
 }
@@ -102,24 +68,19 @@ func (cr *keyboardInteractive) Challenge(user string, instruction string, questi
 var (
 	rsaKey         Signer
 	dsaKey         Signer
-	clientKeychain = new(keychain)
-	clientPassword = password("tiger")
+	clientPassword = "tiger"
 	serverConfig   = &ServerConfig{
 		PasswordCallback: func(conn ConnMetadata, pass []byte) bool {
-			return conn.User() == "testuser" && string(pass) == string(clientPassword)
+			return conn.User() == "testuser" && string(pass) == clientPassword
 		},
 		PublicKeyCallback: func(conn ConnMetadata, algo string, pubkey []byte) bool {
-			ids, err := clientKeychain.Signers()
-			if err != nil {
-				return false
-			}
-			key := ids[0].PublicKey()
+			key := rsaKey.PublicKey()
 			expected := MarshalPublicKey(key)
 			algoname := key.PublicKeyAlgo()
 			return conn.User() == "testuser" && algo == algoname && bytes.Equal(pubkey, expected)
 		},
-		KeyboardInteractiveCallback: func(conn ConnMetadata, client ClientKeyboardInteractive) bool {
-			ans, err := client.Challenge("user",
+		KeyboardInteractiveCallback: func(conn ConnMetadata, challenge KeyboardInteractiveChallenge) bool {
+			ans, err := challenge("user",
 				"instruction",
 				[]string{"question1", "question2"},
 				[]bool{true, true})
@@ -127,7 +88,7 @@ var (
 				return false
 			}
 			ok := conn.User() == "testuser" && ans[0] == "answer1" && ans[1] == "answer2"
-			client.Challenge("user", "motd", nil, nil)
+			challenge("user", "motd", nil, nil)
 			return ok
 		},
 	}
@@ -152,7 +113,6 @@ func init() {
 	if err != nil {
 		panic("NewSignerFromKey: " + err.Error())
 	}
-	clientKeychain.add(rsaKey)
 	serverConfig.AddHostKey(rsaKey)
 }
 
@@ -184,8 +144,8 @@ func newMockAuthServer(t *testing.T) string {
 func TestClientAuthPublicKey(t *testing.T) {
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []ClientAuth{
-			ClientAuthKeyring(clientKeychain),
+		Auth: []AuthMethod{
+			PublicKeys(rsaKey),
 		},
 	}
 	c, err := Dial("tcp", newMockAuthServer(t), config)
@@ -195,11 +155,11 @@ func TestClientAuthPublicKey(t *testing.T) {
 	c.Close()
 }
 
-func TestClientAuthPassword(t *testing.T) {
+func TestAuthMethodPassword(t *testing.T) {
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []ClientAuth{
-			ClientAuthPassword(clientPassword),
+		Auth: []AuthMethod{
+			Password(clientPassword),
 		},
 	}
 
@@ -210,13 +170,12 @@ func TestClientAuthPassword(t *testing.T) {
 	c.Close()
 }
 
-func TestClientAuthWrongPassword(t *testing.T) {
-	wrongPw := password("wrong")
+func TestAuthMethodWrongPassword(t *testing.T) {
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []ClientAuth{
-			ClientAuthPassword(wrongPw),
-			ClientAuthKeyring(clientKeychain),
+		Auth: []AuthMethod{
+			Password("wrong"),
+			PublicKeys(rsaKey),
 		},
 	}
 
@@ -227,15 +186,15 @@ func TestClientAuthWrongPassword(t *testing.T) {
 	c.Close()
 }
 
-func TestClientAuthKeyboardInteractive(t *testing.T) {
+func TestAuthMethodKeyboardInteractive(t *testing.T) {
 	answers := keyboardInteractive(map[string]string{
 		"question1": "answer1",
 		"question2": "answer2",
 	})
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []ClientAuth{
-			ClientAuthKeyboardInteractive(&answers),
+		Auth: []AuthMethod{
+			KeyboardInteractive(answers.Challenge),
 		},
 	}
 
@@ -246,15 +205,15 @@ func TestClientAuthKeyboardInteractive(t *testing.T) {
 	c.Close()
 }
 
-func TestClientAuthWrongKeyboardInteractive(t *testing.T) {
+func TestAuthMethodWrongKeyboardInteractive(t *testing.T) {
 	answers := keyboardInteractive(map[string]string{
 		"question1": "answer1",
 		"question2": "WRONG",
 	})
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []ClientAuth{
-			ClientAuthKeyboardInteractive(&answers),
+		Auth: []AuthMethod{
+			KeyboardInteractive(answers.Challenge),
 		},
 	}
 
@@ -266,14 +225,11 @@ func TestClientAuthWrongKeyboardInteractive(t *testing.T) {
 }
 
 // the mock server will only authenticate ssh-rsa keys
-func TestClientAuthInvalidPublicKey(t *testing.T) {
-	kc := new(keychain)
-
-	kc.add(dsaKey)
+func TestAuthMethodInvalidPublicKey(t *testing.T) {
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []ClientAuth{
-			ClientAuthKeyring(kc),
+		Auth: []AuthMethod{
+			PublicKeys(dsaKey),
 		},
 	}
 
@@ -285,14 +241,11 @@ func TestClientAuthInvalidPublicKey(t *testing.T) {
 }
 
 // the client should authenticate with the second key
-func TestClientAuthRSAandDSA(t *testing.T) {
-	kc := new(keychain)
-	kc.add(dsaKey)
-	kc.add(rsaKey)
+func TestAuthMethodRSAandDSA(t *testing.T) {
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []ClientAuth{
-			ClientAuthKeyring(kc),
+		Auth: []AuthMethod{
+			PublicKeys(dsaKey, rsaKey),
 		},
 	}
 	c, err := Dial("tcp", newMockAuthServer(t), config)
@@ -303,13 +256,11 @@ func TestClientAuthRSAandDSA(t *testing.T) {
 }
 
 func TestClientHMAC(t *testing.T) {
-	kc := new(keychain)
-	kc.add(rsaKey)
 	for _, mac := range DefaultMACOrder {
 		config := &ClientConfig{
 			User: "testuser",
-			Auth: []ClientAuth{
-				ClientAuthKeyring(kc),
+			Auth: []AuthMethod{
+				PublicKeys(rsaKey),
 			},
 			Config: Config{
 				MACs: []string{mac},
@@ -325,11 +276,10 @@ func TestClientHMAC(t *testing.T) {
 
 // issue 4285.
 func TestClientUnsupportedCipher(t *testing.T) {
-	kc := new(keychain)
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []ClientAuth{
-			ClientAuthKeyring(kc),
+		Auth: []AuthMethod{
+			PublicKeys(),
 		},
 		Config: Config{
 			Ciphers: []string{"aes128-cbc"}, // not currently supported
@@ -343,11 +293,10 @@ func TestClientUnsupportedCipher(t *testing.T) {
 }
 
 func TestClientUnsupportedKex(t *testing.T) {
-	kc := new(keychain)
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []ClientAuth{
-			ClientAuthKeyring(kc),
+		Auth: []AuthMethod{
+			PublicKeys(),
 		},
 		Config: Config{
 			KeyExchanges: []string{"diffie-hellman-group-exchange-sha256"}, // not currently supported

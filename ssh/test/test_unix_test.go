@@ -133,12 +133,10 @@ func clientConfig() *ssh.ClientConfig {
 	keyChecker.Add(hostKeyRSA.PublicKey())
 	keyChecker.Add(hostKeyDSA.PublicKey())
 
-	kc := new(keychain)
-	kc.keys = append(kc.keys, privateKey)
 	config := &ssh.ClientConfig{
 		User: username(),
-		Auth: []ssh.ClientAuth{
-			ssh.ClientAuthKeyring(kc),
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(privateKey),
 		},
 		HostKeyChecker: &keyChecker,
 	}
@@ -272,26 +270,4 @@ func newServer(t *testing.T) *server {
 			}
 		},
 	}
-}
-
-// keychain implements the ClientKeyring interface.
-type keychain struct {
-	keys []ssh.Signer
-}
-
-func (k *keychain) Signers() ([]ssh.Signer, error) {
-	return k.keys, nil
-}
-
-func (k *keychain) loadPEM(file string) error {
-	buf, err := ioutil.ReadFile(file)
-	if err != nil {
-		return err
-	}
-	key, err := ssh.ParsePrivateKey(buf)
-	if err != nil {
-		return err
-	}
-	k.keys = append(k.keys, key)
-	return nil
 }

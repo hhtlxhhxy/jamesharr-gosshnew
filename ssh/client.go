@@ -193,9 +193,10 @@ type ClientConfig struct {
 	// The username to authenticate.
 	User string
 
-	// A slice of ClientAuth methods. Only the first instance
-	// of a particular RFC 4252 method will be used during authentication.
-	Auth []ClientAuth
+	// A slice of AuthMethod instances. Only the first
+	// instance of a particular RFC 4252 method will be used
+	// during authentication.
+	Auth []AuthMethod
 
 	// HostKeyChecker, if not nil, is called during the cryptographic
 	// handshake to validate the server's host key. A nil HostKeyChecker

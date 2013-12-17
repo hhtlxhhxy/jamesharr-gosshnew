@@ -29,7 +29,7 @@ func (c *connection) clientAuthenticate(config *ClientConfig) error {
 	// during the authentication phase the client first attempts the "none" method
 	// then any untried methods suggested by the server.
 	tried, remain := make(map[string]bool), make(map[string]bool)
-	for auth := ClientAuth(new(noneAuth)); auth != nil; {
+	for auth := AuthMethod(new(noneAuth)); auth != nil; {
 		ok, methods, err := auth.auth(c.transport.getSessionID(), config.User, c.transport, config.Rand)
 		if err != nil {
 			return err
@@ -76,8 +76,8 @@ type HostKeyChecker interface {
 	Check(addr string, remote net.Addr, algorithm string, hostKey []byte) error
 }
 
-// A ClientAuth represents an instance of an RFC 4252 authentication method.
-type ClientAuth interface {
+// An AuthMethod represents an instance of an RFC 4252 authentication method.
+type AuthMethod interface {
 	// auth authenticates user over transport t.
 	// Returns true if authentication is successful.
 	// If authentication is not successful, a []string of alternative
@@ -107,12 +107,11 @@ func (n *noneAuth) method() string {
 	return "none"
 }
 
-// "password" authentication, RFC 4252 Section 8.
-type passwordAuth struct {
-	ClientPassword
-}
+// passwordCallback is an AuthMethod that fetches the password through
+// a function call, e.g. by prompting the user.
+type passwordCallback func() (password string, err error)
 
-func (p *passwordAuth) auth(session []byte, user string, c packetConn, rand io.Reader) (bool, []string, error) {
+func (cb passwordCallback) auth(session []byte, user string, c packetConn, rand io.Reader) (bool, []string, error) {
 	type passwordAuthMsg struct {
 		User     string `sshtype:"50"`
 		Service  string
@@ -121,7 +120,7 @@ func (p *passwordAuth) auth(session []byte, user string, c packetConn, rand io.R
 		Password string
 	}
 
-	pw, err := p.Password(user)
+	pw, err := cb()
 	if err != nil {
 		return false, nil, err
 	}
@@ -129,7 +128,7 @@ func (p *passwordAuth) auth(session []byte, user string, c packetConn, rand io.R
 	if err := c.writePacket(Marshal(passwordAuthMsg{
 		User:     user,
 		Service:  serviceSSH,
-		Method:   "password",
+		Method:   cb.method(),
 		Reply:    false,
 		Password: pw,
 	})); err != nil {
@@ -139,29 +138,19 @@ func (p *passwordAuth) auth(session []byte, user string, c packetConn, rand io.R
 	return handleAuthResponse(c)
 }
 
-func (p *passwordAuth) method() string {
+func (cb passwordCallback) method() string {
 	return "password"
 }
 
-// A ClientPassword implements access to a client's passwords.
-type ClientPassword interface {
-	// Password returns the password to use for user.
-	Password(user string) (password string, err error)
+// Password returns an AuthMethod using the given password.
+func Password(secret string) AuthMethod {
+	return passwordCallback(func() (string, error) { return secret, nil })
 }
 
-// ClientAuthPassword returns a ClientAuth using password authentication.
-func ClientAuthPassword(impl ClientPassword) ClientAuth {
-	return &passwordAuth{impl}
-}
-
-// ClientKeyring implements access to a client key ring.
-type ClientKeyring interface {
-	Signers() ([]Signer, error)
-}
-
-// "publickey" authentication, RFC 4252 Section 7.
-type publickeyAuth struct {
-	ClientKeyring
+// PasswordCallback returns an AuthMethod that uses a callback for
+// fetching a password.
+func PasswordCallback(prompt func() (secret string, err error)) AuthMethod {
+	return passwordCallback(prompt)
 }
 
 type publickeyAuthMsg struct {
@@ -177,20 +166,28 @@ type publickeyAuthMsg struct {
 	Sig []byte `ssh:"rest"`
 }
 
-func (p *publickeyAuth) auth(session []byte, user string, c packetConn, rand io.Reader) (bool, []string, error) {
+// publicKeyCallback is an AuthMethod that uses a set of key
+// pairs fors authentication.
+type publicKeyCallback func() ([]Signer, error)
+
+func (cb publicKeyCallback) method() string {
+	return "publickey"
+}
+
+func (cb publicKeyCallback) auth(session []byte, user string, c packetConn, rand io.Reader) (bool, []string, error) {
 	// Authentication is performed in two stages. The first stage sends an
 	// enquiry to test if each key is acceptable to the remote. The second
 	// stage attempts to authenticate with the valid keys obtained in the
 	// first stage.
 
 	// a map of public keys to their index in the keyring
-	signers, err := p.Signers()
+	signers, err := cb()
 	if err != nil {
 		return false, nil, err
 	}
 	var validKeys []Signer
 	for _, signer := range signers {
-		if ok, err := p.validateKey(signer.PublicKey(), user, c); ok {
+		if ok, err := validateKey(signer.PublicKey(), user, c); ok {
 			validKeys = append(validKeys, signer)
 		} else {
 			if err != nil {
@@ -209,7 +206,7 @@ func (p *publickeyAuth) auth(session []byte, user string, c packetConn, rand io.
 		sign, err := signer.Sign(rand, buildDataSignedForAuth(session, userAuthRequestMsg{
 			User:    user,
 			Service: serviceSSH,
-			Method:  p.method(),
+			Method:  cb.method(),
 		}, []byte(algoname), pubkey))
 		if err != nil {
 			return false, nil, err
@@ -222,7 +219,7 @@ func (p *publickeyAuth) auth(session []byte, user string, c packetConn, rand io.
 		msg := publickeyAuthMsg{
 			User:     user,
 			Service:  serviceSSH,
-			Method:   p.method(),
+			Method:   cb.method(),
 			HasSig:   true,
 			Algoname: algoname,
 			Pubkey:   string(pubkey),
@@ -244,13 +241,13 @@ func (p *publickeyAuth) auth(session []byte, user string, c packetConn, rand io.
 }
 
 // validateKey validates the key provided it is acceptable to the server.
-func (p *publickeyAuth) validateKey(key PublicKey, user string, c packetConn) (bool, error) {
+func validateKey(key PublicKey, user string, c packetConn) (bool, error) {
 	pubkey := MarshalPublicKey(key)
 	algoname := key.PublicKeyAlgo()
 	msg := publickeyAuthMsg{
 		User:     user,
 		Service:  serviceSSH,
-		Method:   p.method(),
+		Method:   "publickey",
 		HasSig:   false,
 		Algoname: algoname,
 		Pubkey:   string(pubkey),
@@ -259,10 +256,10 @@ func (p *publickeyAuth) validateKey(key PublicKey, user string, c packetConn) (b
 		return false, err
 	}
 
-	return p.confirmKeyAck(key, c)
+	return confirmKeyAck(key, c)
 }
 
-func (p *publickeyAuth) confirmKeyAck(key PublicKey, c packetConn) (bool, error) {
+func confirmKeyAck(key PublicKey, c packetConn) (bool, error) {
 	pubkey := MarshalPublicKey(key)
 	algoname := key.PublicKeyAlgo()
 
@@ -292,13 +289,14 @@ func (p *publickeyAuth) confirmKeyAck(key PublicKey, c packetConn) (bool, error)
 	panic("unreachable")
 }
 
-func (p *publickeyAuth) method() string {
-	return "publickey"
+// PublicKeys returns an AuthMethod that uses the given key
+// pairs.
+func PublicKeys(signers ...Signer) AuthMethod {
+	return publicKeyCallback(func() ([]Signer, error) { return signers, nil })
 }
 
-// ClientAuthKeyring returns a ClientAuth using public key authentication.
-func ClientAuthKeyring(impl ClientKeyring) ClientAuth {
-	return &publickeyAuth{impl}
+func PublicKeysCallback(getSigners func() (signers []Signer, err error)) AuthMethod {
+	return publicKeyCallback(getSigners)
 }
 
 // handleAuthResponse returns whether the preceding authentication request succeeded
@@ -331,35 +329,26 @@ func handleAuthResponse(c packetConn) (bool, []string, error) {
 	panic("unreachable")
 }
 
-// ClientKeyboardInteractive should prompt the user for the given
-// questions.
-type ClientKeyboardInteractive interface {
-	// Challenge should print the questions, optionally disabling
-	// echoing (eg. for passwords), and return all the answers.
-	// Challenge may be called multiple times in a single
-	// session. After successful authentication, the server may
-	// send a challenge with no questions, for which the user and
-	// instruction messages should be printed.  RFC 4256 section
-	// 3.3 details how the UI should behave for both CLI and
-	// GUI environments.
-	Challenge(user, instruction string, questions []string, echos []bool) ([]string, error)
+// KeyboardInteractiveChallenge should print questions, optionally
+// disabling echoing (e.g. for passwords), and return all the answers.
+// Challenge may be called multiple times in a single session. After
+// successful authentication, the server may send a challenge with no
+// questions, for which the user and instruction messages should be
+// printed.  RFC 4256 section 3.3 details how the UI should behave for
+// both CLI and GUI environments.
+type KeyboardInteractiveChallenge func(user, instruction string, questions []string, echos []bool) (answers []string, err error)
+
+// KeyboardInteractive returns a AuthMethod using a prompt/response
+// sequence controlled by the server.
+func KeyboardInteractive(challenge KeyboardInteractiveChallenge) AuthMethod {
+	return challenge
 }
 
-// ClientAuthKeyboardInteractive returns a ClientAuth using a
-// prompt/response sequence controlled by the server.
-func ClientAuthKeyboardInteractive(impl ClientKeyboardInteractive) ClientAuth {
-	return &keyboardInteractiveAuth{impl}
-}
-
-type keyboardInteractiveAuth struct {
-	ClientKeyboardInteractive
-}
-
-func (k *keyboardInteractiveAuth) method() string {
+func (cb KeyboardInteractiveChallenge) method() string {
 	return "keyboard-interactive"
 }
 
-func (k *keyboardInteractiveAuth) auth(session []byte, user string, c packetConn, rand io.Reader) (bool, []string, error) {
+func (cb KeyboardInteractiveChallenge) auth(session []byte, user string, c packetConn, rand io.Reader) (bool, []string, error) {
 	type initiateMsg struct {
 		User       string `sshtype:"50"`
 		Service    string
@@ -424,7 +413,7 @@ func (k *keyboardInteractiveAuth) auth(session []byte, user string, c packetConn
 			return false, nil, fmt.Errorf("ssh: junk following message %q", rest)
 		}
 
-		answers, err := k.Challenge(msg.User, msg.Instruction, prompts, echos)
+		answers, err := cb(msg.User, msg.Instruction, prompts, echos)
 		if err != nil {
 			return false, nil, err
 		}

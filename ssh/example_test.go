@@ -104,13 +104,11 @@ func ExampleDial() {
 	// the "password" authentication method is supported.
 	//
 	// To authenticate with the remote server you must pass at least one
-	// implementation of ClientAuth via the Auth field in ClientConfig.
+	// implementation of AuthMethod via the Auth field in ClientConfig.
 	config := &ClientConfig{
 		User: "username",
-		Auth: []ClientAuth{
-			// ClientAuthPassword wraps a ClientPassword implementation
-			// in a type that implements ClientAuth.
-			ClientAuthPassword(password("yourpassword")),
+		Auth: []AuthMethod{
+			Password("yourpassword"),
 		},
 	}
 	client, err := Dial("tcp", "yourserver.com:22", config)
@@ -139,8 +137,8 @@ func ExampleDial() {
 func ExampleClientConn_Listen() {
 	config := &ClientConfig{
 		User: "username",
-		Auth: []ClientAuth{
-			ClientAuthPassword(password("password")),
+		Auth: []AuthMethod{
+			Password("password"),
 		},
 	}
 	// Dial your ssh server.
@@ -167,8 +165,8 @@ func ExampleSession_RequestPty() {
 	// Create client config
 	config := &ClientConfig{
 		User: "username",
-		Auth: []ClientAuth{
-			ClientAuthPassword(password("password")),
+		Auth: []AuthMethod{
+			Password("password"),
 		},
 	}
 	// Connect to ssh server

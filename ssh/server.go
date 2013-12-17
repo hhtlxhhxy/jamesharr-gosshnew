@@ -40,7 +40,7 @@ type ServerConfig struct {
 	// Challenge rounds. To avoid information leaks, the client
 	// should be presented a challenge even if the user is
 	// unknown.
-	KeyboardInteractiveCallback func(conn ConnMetadata, client ClientKeyboardInteractive) bool
+	KeyboardInteractiveCallback func(conn ConnMetadata, client KeyboardInteractiveChallenge) bool
 }
 
 // AddHostKey adds a private key as a host key. If an existing host
@@ -256,7 +256,8 @@ userAuthLoop:
 				break
 			}
 
-			if config.KeyboardInteractiveCallback(s, &sshClientKeyboardInteractive{s}) {
+			prompter := &sshClientKeyboardInteractive{s}
+			if config.KeyboardInteractiveCallback(s, prompter.Challenge) {
 				break userAuthLoop
 			}
 		case "publickey":
