@@ -175,7 +175,7 @@ func TestAuth(t *testing.T) {
 	}()
 
 	conf := ssh.ClientConfig{}
-	conf.Auth = append(conf.Auth, ssh.ClientAuthKeyring(agent))
+	conf.Auth = append(conf.Auth, ssh.PublicKeysCallback(agent.Signers))
 	conn, _, _, err := ssh.NewClientConn(b, "", &conf)
 	if err != nil {
 		t.Fatalf("NewClientConn: %v", err)
