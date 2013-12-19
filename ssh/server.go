@@ -44,7 +44,8 @@ type ServerConfig struct {
 }
 
 // AddHostKey adds a private key as a host key. If an existing host
-// key exists with the same algorithm, it is overwritten.
+// key exists with the same algorithm, it is overwritten. Each server
+// config must have at least one host key.
 func (s *ServerConfig) AddHostKey(key Signer) {
 	for i, k := range s.hostKeys {
 		if k.PublicKey().PublicKeyAlgo() == key.PublicKey().PublicKeyAlgo() {
@@ -54,19 +55,6 @@ func (s *ServerConfig) AddHostKey(key Signer) {
 	}
 
 	s.hostKeys = append(s.hostKeys, key)
-}
-
-// SetRSAPrivateKey sets the private key for a Server. A Server must have a
-// private key configured in order to accept connections. The private key must
-// be in the form of a PEM encoded, PKCS#1, RSA private key. The file "id_rsa"
-// typically contains such a key.
-func (s *ServerConfig) SetRSAPrivateKey(pemBytes []byte) error {
-	priv, err := ParsePrivateKey(pemBytes)
-	if err != nil {
-		return err
-	}
-	s.AddHostKey(priv)
-	return nil
 }
 
 // cachedPubKey contains the results of querying whether a public key is
