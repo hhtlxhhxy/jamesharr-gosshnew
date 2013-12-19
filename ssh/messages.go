@@ -299,7 +299,7 @@ func Unmarshal(data []byte, out interface{}) error {
 			data = data[1:]
 		case reflect.Array:
 			if t.Elem().Kind() != reflect.Uint8 {
-				panic("array of non-uint8")
+				return fmt.Errorf("array of unsupported type in field %d: %T", i, field.Interface())
 			}
 			if len(data) < t.Len() {
 				return ParseError{expectedType}
@@ -340,7 +340,7 @@ func Unmarshal(data []byte, out interface{}) error {
 				}
 				field.Set(reflect.ValueOf(nl))
 			default:
-				panic("slice of unknown type")
+				return fmt.Errorf("slice to unknown type in field %d: %T", i, field.Interface())
 			}
 		case reflect.Ptr:
 			if t == bigIntType {
@@ -350,10 +350,10 @@ func Unmarshal(data []byte, out interface{}) error {
 				}
 				field.Set(reflect.ValueOf(n))
 			} else {
-				panic("pointer to unknown type")
+				return fmt.Errorf("pointer to unknown in field %d: %T", i, field.Interface())
 			}
 		default:
-			panic("unknown type")
+			return fmt.Errorf("unknown type in field %d: %T", field.Interface(), i)
 		}
 	}
 
@@ -392,7 +392,7 @@ func marshalStruct(out []byte, msg interface{}) []byte {
 			out = append(out, v)
 		case reflect.Array:
 			if t.Elem().Kind() != reflect.Uint8 {
-				panic("array of non-uint8")
+				panic(fmt.Sprintf("array of non-uint8 in field %d: %T", i, field.Interface()))
 			}
 			for j, l := 0, t.Len(); j < l; j++ {
 				out = append(out, uint8(field.Index(j).Uint()))
@@ -425,7 +425,7 @@ func marshalStruct(out []byte, msg interface{}) []byte {
 					binary.BigEndian.PutUint32(out[offset:], uint32(len(out)-offset-4))
 				}
 			default:
-				panic("slice of unknown type")
+				panic(fmt.Sprintf("slice of unknown type in field %d: %T", i, field.Interface()))
 			}
 		case reflect.Ptr:
 			if t == bigIntType {
@@ -443,7 +443,7 @@ func marshalStruct(out []byte, msg interface{}) []byte {
 				out = out[:oldLength+needed]
 				marshalInt(out[oldLength:], n)
 			} else {
-				panic("pointer to unknown type")
+				panic(fmt.Sprintf("pointer to unknown type in field %d: %T", i, field.Interface()))
 			}
 		}
 	}
