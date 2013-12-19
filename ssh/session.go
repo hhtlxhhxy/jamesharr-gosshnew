@@ -385,29 +385,20 @@ func (s *Session) wait(reqs <-chan *Request) error {
 			d := msg.Payload
 			wm.status = int(d[0])<<24 | int(d[1])<<16 | int(d[2])<<8 | int(d[3])
 		case "exit-signal":
-			signal, rest, ok := parseString(msg.Payload)
-			if !ok {
-				return fmt.Errorf("wait: could not parse request data: %v", msg.Payload)
+			var sigval struct {
+				Signal     string
+				CoreDumped bool
+				Error      string
+				Lang       string
 			}
-			wm.signal = safeString(string(signal))
+			if err := Unmarshal(msg.Payload, &sigval); err != nil {
+				return err
+			}
 
-			// skip coreDumped bool
-			if len(rest) == 0 {
-				return fmt.Errorf("wait: could not parse request data: %v", msg.Payload)
-			}
-			rest = rest[1:]
-
-			errmsg, rest, ok := parseString(rest)
-			if !ok {
-				return fmt.Errorf("wait: could not parse request data: %v", msg.Payload)
-			}
-			wm.msg = safeString(string(errmsg))
-
-			lang, _, ok := parseString(rest)
-			if !ok {
-				return fmt.Errorf("wait: could not parse request data: %v", msg.Payload)
-			}
-			wm.lang = safeString(string(lang))
+			// Must sanitize strings?
+			wm.signal = sigval.Signal
+			wm.msg = sigval.Error
+			wm.lang = sigval.Lang
 		default:
 			// This handles keepalives and matches
 			// OpenSSH's behaviour.

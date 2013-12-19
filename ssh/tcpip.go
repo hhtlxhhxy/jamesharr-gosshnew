@@ -105,11 +105,13 @@ func (c *Client) ListenTCP(laddr *net.TCPAddr) (net.Listener, error) {
 	// If the original port was 0, then the remote side will
 	// supply a real port number in the response.
 	if laddr.Port == 0 {
-		port, _, ok := parseUint32(resp)
-		if !ok {
-			return nil, errors.New("unable to parse response")
+		var p struct {
+			Port uint32
 		}
-		laddr.Port = int(port)
+		if err := Unmarshal(resp, &p); err != nil {
+			return nil, err
+		}
+		laddr.Port = int(p.Port)
 	}
 
 	// Register this forward, using the port number we obtained.
