@@ -129,11 +129,10 @@ type Session struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
-	ch               Channel // the channel backing this session
-	incomingRequests <-chan *Request
-	started          bool // true once Start, Run or Shell is invoked.
-	copyFuncs        []func() error
-	errors           chan error // one send per copyFunc
+	ch        Channel // the channel backing this session
+	started   bool    // true once Start, Run or Shell is invoked.
+	copyFuncs []func() error
+	errors    chan error // one send per copyFunc
 
 	// true if pipe method is active
 	stdinpipe, stdoutpipe, stderrpipe bool
@@ -377,10 +376,10 @@ func (s *Session) Wait() error {
 	return copyError
 }
 
-func (s *Session) wait() error {
+func (s *Session) wait(reqs <-chan *Request) error {
 	wm := Waitmsg{status: -1}
 	// Wait for msg channel to be closed before returning.
-	for msg := range s.incomingRequests {
+	for msg := range reqs {
 		switch msg.Type {
 		case "exit-status":
 			d := msg.Payload
@@ -532,20 +531,14 @@ func (s *Session) StderrPipe() (io.Reader, error) {
 	return s.ch.Stderr(), nil
 }
 
-// NewSession returns a new interactive session on the remote host.
-func (c *Client) NewSession() (*Session, error) {
-	ch, in, err := c.OpenChannel("session", nil)
-	if err != nil {
-		return nil, err
-	}
-
+// newSession returns a new interactive session on the remote host.
+func newSession(ch Channel, reqs <-chan *Request) (*Session, error) {
 	s := &Session{
-		ch:               ch,
-		incomingRequests: in,
+		ch: ch,
 	}
 	s.exitStatus = make(chan error, 1)
 	go func() {
-		s.exitStatus <- s.wait()
+		s.exitStatus <- s.wait(reqs)
 	}()
 
 	return s, nil

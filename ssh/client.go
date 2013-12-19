@@ -100,6 +100,15 @@ func verifyHostKeySignature(hostKeyAlgo string, result *kexResult) error {
 	return nil
 }
 
+// NewSession opens a new Session for this client.
+func (c *Client) NewSession() (*Session, error) {
+	ch, in, err := c.OpenChannel("session", nil)
+	if err != nil {
+		return nil, err
+	}
+	return newSession(ch, in)
+}
+
 func (c *Client) handleGlobalRequests(incoming <-chan *Request) {
 	for r := range incoming {
 		// This handles keepalive messages and matches
