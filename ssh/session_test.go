@@ -12,7 +12,6 @@ import (
 	"io"
 	"io/ioutil"
 	"math/rand"
-	"net"
 	"testing"
 
 	"code.google.com/p/gosshnew/ssh/terminal"
@@ -22,37 +21,23 @@ type serverType func(Channel, <-chan *Request, *testing.T)
 
 // dial constructs a new test server and returns a *ClientConn.
 func dial(handler serverType, t *testing.T) *Client {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	c1, c2, err := netPipe()
 	if err != nil {
-		t.Fatalf("unable to listen: %v", err)
+		t.Fatalf("netPipe: %v", err)
 	}
-	go func() {
-		conn, err := l.Accept()
-		l.Close()
-		if err != nil {
-			t.Errorf("Unable to accept: %v", err)
-			return
-		}
-		defer conn.Close()
-		server, err := newServer(conn, serverConfig)
-		if err != nil {
-			t.Errorf("Unable to handshake: %v", err)
-			return
-		}
-		for {
-			newCh, err := server.Accept()
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				return
-			}
 
-			// We sometimes get ECONNRESET rather than EOF.
-			if _, ok := err.(*net.OpError); ok {
-				return
-			}
-			if err != nil {
-				t.Errorf("Unable to accept incoming channel request: %v", err)
-				return
-			}
+	go func() {
+		defer c1.Close()
+		conf := *serverConfig
+		conf.NoClientAuth = true
+
+		_, chans, reqs, err := NewServerConn(c1, &conf)
+		if err != nil {
+			t.Fatalf("Unable to handshake: %v", err)
+		}
+		go DiscardIncoming(reqs)
+
+		for newCh := range chans {
 			if newCh.ChannelType() != "session" {
 				newCh.Reject(UnknownChannelType, "unknown channel type")
 				continue
@@ -61,6 +46,7 @@ func dial(handler serverType, t *testing.T) *Client {
 			ch, inReqs, err := newCh.Accept()
 			if err != nil {
 				t.Errorf("Accept: %v", err)
+				continue
 			}
 			go func() {
 				handler(ch, inReqs, t)
@@ -70,16 +56,14 @@ func dial(handler serverType, t *testing.T) *Client {
 
 	config := &ClientConfig{
 		User: "testuser",
-		Auth: []AuthMethod{
-			Password("tiger"),
-		},
 	}
 
-	c, err := Dial("tcp", l.Addr().String(), config)
+	conn, chans, reqs, err := NewClientConn(c2, "", config)
 	if err != nil {
 		t.Fatalf("unable to dial remote side: %v", err)
 	}
-	return c
+
+	return NewClient(conn, chans, reqs)
 }
 
 // Test a simple string is returned to session.Stdout.
