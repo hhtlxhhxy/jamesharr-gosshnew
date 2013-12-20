@@ -8,11 +8,8 @@ import (
 	"bytes"
 	"crypto/dsa"
 	"math/big"
-	"net"
 	"strings"
 	"testing"
-
-	_ "crypto/sha1"
 )
 
 // private key for mock server
@@ -116,39 +113,23 @@ func init() {
 	serverConfig.AddHostKey(rsaKey)
 }
 
-// newMockAuthServer creates a new Server bound to
-// the loopback interface. The server exits after
-// processing one handshake.
-func newMockAuthServer(t *testing.T) string {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+// tryAuth runs a handshake with a given config against an SSH server
+// with config serverConfig
+func tryAuth(t *testing.T, config *ClientConfig) error {
+	c1, c2, err := netPipe()
 	if err != nil {
-		t.Fatalf("unable to newMockAuthServer: %s", err)
+		t.Fatalf("netPipe: %v", err)
 	}
+	defer c1.Close()
+	defer c2.Close()
 	go func() {
-		defer l.Close()
-		nConn, err := l.Accept()
-		if err != nil {
-			t.Errorf("Unable to accept incoming connection: %v", err)
-			return
-		}
-		defer nConn.Close()
-		if _, err = newServer(nConn, serverConfig); err != nil {
+		if _, err = newServer(c1, serverConfig); err != nil {
 			// not Errorf because this is expected to
 			// fail for some tests.
 			t.Logf("Handshaking error: %v", err)
 		}
 	}()
-	return l.Addr().String()
-}
-
-func tryAuth(t *testing.T, config *ClientConfig) error {
-	addr := newMockAuthServer(t)
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	_, _, _, err = NewClientConn(conn, addr, config)
+	_, _, _, err = NewClientConn(c2, "", config)
 	return err
 }
 
