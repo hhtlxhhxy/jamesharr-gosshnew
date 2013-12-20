@@ -32,48 +32,60 @@ func TestIntLength(t *testing.T) {
 	}
 }
 
-var messageTypes = []interface{}{
-	&kexInitMsg{},
-	&kexDHInitMsg{},
-	&serviceRequestMsg{},
-	&serviceAcceptMsg{},
-	&userAuthRequestMsg{},
-	&channelOpenMsg{},
-	&channelOpenConfirmMsg{},
-	&channelOpenFailureMsg{},
-	&channelRequestMsg{},
-	&channelRequestSuccessMsg{},
+type msgAllTypes struct {
+	Bool    bool `sshtype:"21"`
+	Array   [16]byte
+	Uint32  uint32
+	Uint8   uint8
+	String  string
+	Strings []string
+	Bytes   []byte
+	Int     *big.Int
+	Rest    []byte `ssh:"rest"`
+}
+
+func (t *msgAllTypes) Generate(rand *rand.Rand, size int) reflect.Value {
+	m := &msgAllTypes{}
+	m.Bool = rand.Intn(2) == 1
+	randomBytes(m.Array[:], rand)
+	m.Uint32 = uint32(rand.Intn(1 << 32))
+	m.Uint8 = uint8(rand.Intn(1 << 8))
+	m.String = string(m.Array[:])
+	m.Strings = randomNameList(rand)
+	m.Bytes = m.Array[:]
+	m.Int = randomInt(rand)
+	m.Rest = m.Array[:]
+	return reflect.ValueOf(m)
 }
 
 func TestMarshalUnmarshal(t *testing.T) {
 	rand := rand.New(rand.NewSource(0))
-	for i, iface := range messageTypes {
-		ty := reflect.ValueOf(iface).Type()
+	iface := &msgAllTypes{}
+	ty := reflect.ValueOf(iface).Type()
 
-		n := 100
-		if testing.Short() {
-			n = 5
+	n := 100
+	if testing.Short() {
+		n = 5
+	}
+	for j := 0; j < n; j++ {
+		v, ok := quick.Value(ty, rand)
+		if !ok {
+			t.Errorf("failed to create value")
+			break
 		}
-		for j := 0; j < n; j++ {
-			v, ok := quick.Value(ty, rand)
-			if !ok {
-				t.Errorf("#%d: failed to create value", i)
-				break
-			}
 
-			m1 := v.Elem().Interface()
-			m2 := iface
+		m1 := v.Elem().Interface()
+		m2 := iface
 
-			marshaled := Marshal(m1)
-			if err := Unmarshal(marshaled, m2); err != nil {
-				t.Errorf("#%d failed to Unmarshal %#v: %s", i, m1, err)
-				break
-			}
+		marshaled := Marshal(m1)
+		if err := Unmarshal(marshaled, m2); err != nil {
+			t.Errorf("Unmarshal %#v: %s", m1, err)
+			break
+		}
 
-			if !reflect.DeepEqual(v.Interface(), m2) {
-				t.Errorf("#%d\ngot: %#v\nwant:%#v\n%x", i, m2, m1, marshaled)
-				break
-			}
+		if !reflect.DeepEqual(v.Interface(), m2) {
+			t.Errorf("got: %#v\nwant:%#v\n%x", m2, m1, marshaled)
+			break
 		}
 	}
 }
@@ -189,13 +201,6 @@ func (*kexDHInitMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	dhi := &kexDHInitMsg{}
 	dhi.X = randomInt(rand)
 	return reflect.ValueOf(dhi)
-}
-
-// TODO(dfc) maybe this can be removed in the future if testing/quick can handle
-// derived basic types.
-func (RejectionReason) Generate(rand *rand.Rand, size int) reflect.Value {
-	m := RejectionReason(Prohibited)
-	return reflect.ValueOf(m)
 }
 
 var (

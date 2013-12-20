@@ -178,8 +178,12 @@ type ptyRequestMsg struct {
 func (s *Session) RequestPty(term string, h, w int, termmodes TerminalModes) error {
 	var tm []byte
 	for k, v := range termmodes {
-		tm = append(tm, k)
-		tm = appendU32(tm, v)
+		kv := struct {
+			Key byte
+			Val uint32
+		}{k, v}
+
+		tm = append(tm, Marshal(&kv)...)
 	}
 	tm = append(tm, tty_OP_END)
 	req := ptyRequestMsg{
