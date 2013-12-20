@@ -141,6 +141,17 @@ func newMockAuthServer(t *testing.T) string {
 	return l.Addr().String()
 }
 
+func tryAuth(t *testing.T, config *ClientConfig) error {
+	addr := newMockAuthServer(t)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_, _, _, err = NewClientConn(conn, addr, config)
+	return err
+}
+
 func TestClientAuthPublicKey(t *testing.T) {
 	config := &ClientConfig{
 		User: "testuser",
@@ -148,11 +159,9 @@ func TestClientAuthPublicKey(t *testing.T) {
 			PublicKeys(rsaKey),
 		},
 	}
-	c, err := Dial("tcp", newMockAuthServer(t), config)
-	if err != nil {
+	if err := tryAuth(t, config); err != nil {
 		t.Fatalf("unable to dial remote side: %s", err)
 	}
-	c.Close()
 }
 
 func TestAuthMethodPassword(t *testing.T) {
@@ -163,11 +172,9 @@ func TestAuthMethodPassword(t *testing.T) {
 		},
 	}
 
-	c, err := Dial("tcp", newMockAuthServer(t), config)
-	if err != nil {
+	if err := tryAuth(t, config); err != nil {
 		t.Fatalf("unable to dial remote side: %s", err)
 	}
-	c.Close()
 }
 
 func TestAuthMethodWrongPassword(t *testing.T) {
@@ -179,11 +186,9 @@ func TestAuthMethodWrongPassword(t *testing.T) {
 		},
 	}
 
-	c, err := Dial("tcp", newMockAuthServer(t), config)
-	if err != nil {
+	if err := tryAuth(t, config); err != nil {
 		t.Fatalf("unable to dial remote side: %s", err)
 	}
-	c.Close()
 }
 
 func TestAuthMethodKeyboardInteractive(t *testing.T) {
@@ -198,11 +203,9 @@ func TestAuthMethodKeyboardInteractive(t *testing.T) {
 		},
 	}
 
-	c, err := Dial("tcp", newMockAuthServer(t), config)
-	if err != nil {
+	if err := tryAuth(t, config); err != nil {
 		t.Fatalf("unable to dial remote side: %s", err)
 	}
-	c.Close()
 }
 
 func TestAuthMethodWrongKeyboardInteractive(t *testing.T) {
@@ -217,9 +220,7 @@ func TestAuthMethodWrongKeyboardInteractive(t *testing.T) {
 		},
 	}
 
-	c, err := Dial("tcp", newMockAuthServer(t), config)
-	if err == nil {
-		c.Close()
+	if err := tryAuth(t, config); err == nil {
 		t.Fatalf("wrong answers should not have authenticated with KeyboardInteractive")
 	}
 }
@@ -233,9 +234,7 @@ func TestAuthMethodInvalidPublicKey(t *testing.T) {
 		},
 	}
 
-	c, err := Dial("tcp", newMockAuthServer(t), config)
-	if err == nil {
-		c.Close()
+	if err := tryAuth(t, config); err == nil {
 		t.Fatalf("dsa private key should not have authenticated with rsa public key")
 	}
 }
@@ -248,11 +247,9 @@ func TestAuthMethodRSAandDSA(t *testing.T) {
 			PublicKeys(dsaKey, rsaKey),
 		},
 	}
-	c, err := Dial("tcp", newMockAuthServer(t), config)
-	if err != nil {
+	if err := tryAuth(t, config); err != nil {
 		t.Fatalf("client could not authenticate with rsa key: %v", err)
 	}
-	c.Close()
 }
 
 func TestClientHMAC(t *testing.T) {
@@ -266,11 +263,9 @@ func TestClientHMAC(t *testing.T) {
 				MACs: []string{mac},
 			},
 		}
-		c, err := Dial("tcp", newMockAuthServer(t), config)
-		if err != nil {
+		if err := tryAuth(t, config); err != nil {
 			t.Fatalf("client could not authenticate with mac algo %s: %v", mac, err)
 		}
-		c.Close()
 	}
 }
 
@@ -285,10 +280,8 @@ func TestClientUnsupportedCipher(t *testing.T) {
 			Ciphers: []string{"aes128-cbc"}, // not currently supported
 		},
 	}
-	c, err := Dial("tcp", newMockAuthServer(t), config)
-	if err == nil {
+	if err := tryAuth(t, config); err == nil {
 		t.Errorf("expected no ciphers in common")
-		c.Close()
 	}
 }
 
@@ -302,11 +295,7 @@ func TestClientUnsupportedKex(t *testing.T) {
 			KeyExchanges: []string{"diffie-hellman-group-exchange-sha256"}, // not currently supported
 		},
 	}
-	c, err := Dial("tcp", newMockAuthServer(t), config)
-	if err == nil || !strings.Contains(err.Error(), "no common algorithms") {
+	if err := tryAuth(t, config); err == nil || !strings.Contains(err.Error(), "no common algorithms") {
 		t.Errorf("got %v, expected 'no common algorithms'", err)
-	}
-	if c != nil {
-		c.Close()
 	}
 }
