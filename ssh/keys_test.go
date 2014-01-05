@@ -49,7 +49,7 @@ func init() {
 		Key:             ecdsaKey.PublicKey(),
 		ValidPrincipals: []string{"gopher1", "gopher2"}, // increases test coverage
 		ValidAfter:      0,                              // unix epoch
-		ValidBefore:     maxUint64,                      // The end of currently representable time.
+		ValidBefore:     CertTimeInfinity,               // The end of currently representable time.
 		Reserved:        []byte{},                       // To pass reflect.DeepEqual after marshal & parse, this must be non-nil
 		SignatureKey:    rsaKey.PublicKey(),
 	}

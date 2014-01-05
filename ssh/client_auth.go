@@ -202,18 +202,19 @@ func (cb publicKeyCallback) auth(session []byte, user string, c packetConn, rand
 		pub := signer.PublicKey()
 
 		pubkey := MarshalPublicKey(pub)
-		algoname := pub.PublicKeyAlgo()
+		privAlgo := pub.PrivateKeyAlgo()
+		pubAlgo := pub.PublicKeyAlgo()
 		sign, err := signer.Sign(rand, buildDataSignedForAuth(session, userAuthRequestMsg{
 			User:    user,
 			Service: serviceSSH,
 			Method:  cb.method(),
-		}, []byte(algoname), pubkey))
+		}, []byte(pubAlgo), pubkey))
 		if err != nil {
 			return false, nil, err
 		}
 
 		// manually wrap the serialized signature in a string
-		s := serializeSignature(algoname, sign)
+		s := serializeSignature(privAlgo, sign)
 		sig := make([]byte, stringLength(len(s)))
 		marshalString(sig, s)
 		msg := publickeyAuthMsg{
@@ -221,7 +222,7 @@ func (cb publicKeyCallback) auth(session []byte, user string, c packetConn, rand
 			Service:  serviceSSH,
 			Method:   cb.method(),
 			HasSig:   true,
-			Algoname: algoname,
+			Algoname: pubAlgo,
 			Pubkey:   string(pubkey),
 			Sig:      sig,
 		}

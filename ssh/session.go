@@ -183,7 +183,7 @@ func (s *Session) RequestPty(term string, h, w int, termmodes TerminalModes) err
 			Val uint32
 		}{k, v}
 
-		tm = append(tm, Marshal(&kv)...)
+		tm = append(tm, Marshal(kv)...)
 	}
 	tm = append(tm, tty_OP_END)
 	req := ptyRequestMsg{

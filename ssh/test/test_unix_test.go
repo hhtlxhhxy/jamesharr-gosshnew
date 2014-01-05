@@ -41,6 +41,7 @@ StrictModes no
 RSAAuthentication yes
 PubkeyAuthentication yes
 AuthorizedKeysFile	{{.Dir}}/authorized_keys
+TrustedUserCAKeys {{.Dir}}/user_ca.pub
 IgnoreRhosts yes
 RhostsRSAAuthentication no
 HostbasedAuthentication no

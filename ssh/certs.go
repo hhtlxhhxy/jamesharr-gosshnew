@@ -5,6 +5,10 @@
 package ssh
 
 import (
+	"bytes"
+	"crypto/rand"
+	"errors"
+	"io"
 	"time"
 )
 
@@ -36,8 +40,8 @@ type tuple struct {
 }
 
 const (
-	maxUint64 = 1<<64 - 1
-	maxInt64  = 1<<63 - 1
+	CertTimeInfinity = 1<<64 - 1
+	maxInt64         = 1<<63 - 1
 )
 
 // CertTime represents an unsigned 64-bit time value in seconds starting from
@@ -54,7 +58,7 @@ func (ct CertTime) Time() time.Time {
 }
 
 func (ct CertTime) IsInfinite() bool {
-	return ct == maxUint64
+	return ct == CertTimeInfinity
 }
 
 // An OpenSSHCertV01 represents an OpenSSH certificate as defined in
@@ -74,11 +78,52 @@ type OpenSSHCertV01 struct {
 	Signature               *signature
 }
 
+type openSSHCertSigner struct {
+	pub    *OpenSSHCertV01
+	signer Signer
+}
+
+// NewCertSigner constructs a Signer whose public key is the given
+// certificate. The public key in cert.Key should be the same as
+// signer.PublicKey().
+func NewCertSigner(cert *OpenSSHCertV01, signer Signer) (Signer, error) {
+	if bytes.Compare(cert.Key.Marshal(), signer.PublicKey().Marshal()) != 0 {
+		return nil, errors.New("ssh: signer and cert have different public key")
+	}
+
+	return &openSSHCertSigner{cert, signer}, nil
+}
+
+func (s *openSSHCertSigner) Sign(rand io.Reader, data []byte) ([]byte, error) {
+	return s.signer.Sign(rand, data)
+}
+
+func (s *openSSHCertSigner) PublicKey() PublicKey {
+	return s.pub
+}
+
 // validateOpenSSHCertV01Signature uses the cert's SignatureKey to verify that
 // the cert's Signature.Blob is the result of signing the cert bytes starting
 // from the algorithm string and going up to and including the SignatureKey.
 func validateOpenSSHCertV01Signature(cert *OpenSSHCertV01) bool {
 	return cert.SignatureKey.Verify(cert.BytesForSigning(), cert.Signature.Blob)
+}
+
+// SignCert has an authority sign the certificate. It sets the
+// Signature and SignatureKey of the cert.
+func (c *OpenSSHCertV01) SignCert(authority Signer) error {
+	pub := authority.PublicKey()
+	c.SignatureKey = pub
+	// Should get rand from some config?
+	blob, err := authority.Sign(rand.Reader, c.BytesForSigning())
+	if err != nil {
+		return err
+	}
+	c.Signature = &signature{
+		Format: pub.PrivateKeyAlgo(),
+		Blob:   blob,
+	}
+	return nil
 }
 
 var certAlgoNames = map[string]string{
