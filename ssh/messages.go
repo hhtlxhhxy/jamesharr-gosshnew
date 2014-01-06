@@ -7,6 +7,7 @@ package ssh
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -267,6 +268,30 @@ func typeTag(structType reflect.Type) byte {
 	return tag
 }
 
+type UnmarshalError struct {
+	Type    string
+	Field   string
+	Problem string
+}
+
+func (e *UnmarshalError) Error() string {
+	s := fmt.Sprintf("ssh: unmarshal error for field %s of type %s", e.Field, e.Type)
+	if e.Problem != "" {
+		s += ": " + e.Problem
+	}
+	return s
+}
+
+func fieldError(t reflect.Type, field int, problem string) error {
+	return &UnmarshalError{
+		t.Name(),
+		t.Field(field).Name,
+		problem,
+	}
+}
+
+var errShortRead = errors.New("ssh: short read")
+
 // Unmarshal parses data in SSH wire format into a structure. The out
 // argument should be a pointer to struct. If the first member of the
 // struct has the "sshtype" tag set to a number in decimal, the packet
@@ -293,16 +318,16 @@ func Unmarshal(data []byte, out interface{}) error {
 		switch t.Kind() {
 		case reflect.Bool:
 			if len(data) < 1 {
-				return ParseError{expectedType}
+				return errShortRead
 			}
 			field.SetBool(data[0] != 0)
 			data = data[1:]
 		case reflect.Array:
 			if t.Elem().Kind() != reflect.Uint8 {
-				return fmt.Errorf("array of unsupported type in field %d: %T", i, field.Interface())
+				return fieldError(structType, i, "array of unsupported type")
 			}
 			if len(data) < t.Len() {
-				return ParseError{expectedType}
+				return errShortRead
 			}
 			for j, n := 0, t.Len(); j < n; j++ {
 				field.Index(j).Set(reflect.ValueOf(data[j]))
@@ -311,19 +336,19 @@ func Unmarshal(data []byte, out interface{}) error {
 		case reflect.Uint32:
 			var u32 uint32
 			if u32, data, ok = parseUint32(data); !ok {
-				return ParseError{expectedType}
+				return errShortRead
 			}
 			field.SetUint(uint64(u32))
 		case reflect.Uint8:
 			if len(data) < 1 {
-				return ParseError{expectedType}
+				return errShortRead
 			}
 			field.SetUint(uint64(data[0]))
 			data = data[1:]
 		case reflect.String:
 			var s []byte
 			if s, data, ok = parseString(data); !ok {
-				return ParseError{expectedType}
+				return fieldError(structType, i, "")
 			}
 			field.SetString(string(s))
 		case reflect.Slice:
@@ -335,31 +360,31 @@ func Unmarshal(data []byte, out interface{}) error {
 				} else {
 					var s []byte
 					if s, data, ok = parseString(data); !ok {
-						return ParseError{expectedType}
+						return errShortRead
 					}
 					field.Set(reflect.ValueOf(s))
 				}
 			case reflect.String:
 				var nl []string
 				if nl, data, ok = parseNameList(data); !ok {
-					return ParseError{expectedType}
+					return errShortRead
 				}
 				field.Set(reflect.ValueOf(nl))
 			default:
-				return fmt.Errorf("slice to unknown type in field %d: %T", i, field.Interface())
+				return fieldError(structType, i, "slice of unsupported type")
 			}
 		case reflect.Ptr:
 			if t == bigIntType {
 				var n *big.Int
 				if n, data, ok = parseInt(data); !ok {
-					return ParseError{expectedType}
+					return errShortRead
 				}
 				field.Set(reflect.ValueOf(n))
 			} else {
-				return fmt.Errorf("pointer to unknown in field %d: %T", i, field.Interface())
+				return fieldError(structType, i, "pointer to unsupported type")
 			}
 		default:
-			return fmt.Errorf("unknown type in field %d: %T", field.Interface(), i)
+			return fieldError(structType, i, "unsupported type")
 		}
 	}
 
