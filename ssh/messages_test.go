@@ -35,6 +35,7 @@ func TestIntLength(t *testing.T) {
 type msgAllTypes struct {
 	Bool    bool `sshtype:"21"`
 	Array   [16]byte
+	Uint64  uint64
 	Uint32  uint32
 	Uint8   uint8
 	String  string
@@ -48,6 +49,7 @@ func (t *msgAllTypes) Generate(rand *rand.Rand, size int) reflect.Value {
 	m := &msgAllTypes{}
 	m.Bool = rand.Intn(2) == 1
 	randomBytes(m.Array[:], rand)
+	m.Uint64 = uint64(rand.Int63n(1<<63 - 1))
 	m.Uint32 = uint32(rand.Intn(1 << 32))
 	m.Uint8 = uint8(rand.Intn(1 << 8))
 	m.String = string(m.Array[:])

@@ -333,6 +333,12 @@ func Unmarshal(data []byte, out interface{}) error {
 				field.Index(j).Set(reflect.ValueOf(data[j]))
 			}
 			data = data[t.Len():]
+		case reflect.Uint64:
+			var u64 uint64
+			if u64, data, ok = parseUint64(data); !ok {
+				return errShortRead
+			}
+			field.SetUint(u64)
 		case reflect.Uint32:
 			var u32 uint32
 			if u32, data, ok = parseUint32(data); !ok {
@@ -430,6 +436,8 @@ func marshalStruct(out []byte, msg interface{}) []byte {
 			}
 		case reflect.Uint32:
 			out = appendU32(out, uint32(field.Uint()))
+		case reflect.Uint64:
+			out = appendU64(out, uint64(field.Uint()))
 		case reflect.Uint8:
 			out = append(out, uint8(field.Uint()))
 		case reflect.String:

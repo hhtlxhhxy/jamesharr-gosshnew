@@ -305,6 +305,12 @@ func appendU32(buf []byte, n uint32) []byte {
 	return append(buf, byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
 }
 
+func appendU64(buf []byte, n uint64) []byte {
+	return append(buf,
+		byte(n>>56), byte(n>>48), byte(n>>40), byte(n>>32),
+		byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+}
+
 func appendInt(buf []byte, n int) []byte {
 	return appendU32(buf, uint32(n))
 }
