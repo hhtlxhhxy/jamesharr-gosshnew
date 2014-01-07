@@ -38,8 +38,14 @@ func TestParseCert(t *testing.T) {
 }
 
 func TestVerifyCert(t *testing.T) {
-	key, _, _, _, _ := ParseAuthorizedKey([]byte(exampleSSHCert))
-	validCert := key.(*OpenSSHCertV01)
+	key, _, _, _, ok := ParseAuthorizedKey([]byte(exampleSSHCert))
+	if !ok {
+		t.Fatalf("ParseAuthorizedKey failed")
+	}
+	validCert, ok := key.(*OpenSSHCertV01)
+	if !ok {
+		t.Fatalf("got %v (%T), want *OpenSSHCertV01", key, key)
+	}
 	if ok := validateOpenSSHCertV01Signature(validCert); !ok {
 		t.Error("Unable to validate certificate!")
 	}

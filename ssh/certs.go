@@ -71,11 +71,123 @@ type OpenSSHCertV01 struct {
 	KeyId                   string
 	ValidPrincipals         []string
 	ValidAfter, ValidBefore CertTime
-	CriticalOptions         []tuple
-	Extensions              []tuple
+	CriticalOptions         []tuple // TODO(hanwen): use map type instead.
+	Extensions              []tuple // TODO(hanwen): use map type instead.
 	Reserved                []byte
 	SignatureKey            PublicKey
-	Signature               *signature
+	Signature               *signature // TODO(hanwen): use public type
+}
+
+// genericCertData holds the key-independent part of the cert data:
+// all certs look like {Nonce, public key fields, generic data
+// fields}.
+type genericCertData struct {
+	Serial          uint64
+	Type            uint32
+	KeyId           string
+	ValidPrincipals []byte
+	ValidAfter      uint64
+	ValidBefore     uint64
+	CriticalOptions []byte
+	Extensions      []byte
+	Reserved        []byte
+	SignatureKey    []byte
+	Signature       []byte
+}
+
+func marshalStringList(namelist []string) []byte {
+	var to []byte
+	for _, name := range namelist {
+		s := struct{ N string }{name}
+		to = append(to, Marshal(s)...)
+	}
+	return to
+}
+
+func marshalTuples(tups []tuple) []byte {
+	var r []byte
+	// TODO(hanwen): fields should be sorted lexicographically
+	for _, t := range tups {
+		s := struct{ K, V string }{t.Name, t.Data}
+		r = append(r, Marshal(s)...)
+	}
+	return r
+}
+
+func parseTuples(in []byte) ([]tuple, error) {
+	var t []tuple
+	for len(in) > 0 {
+		name, rest, ok := parseString(in)
+		if !ok {
+			return nil, errShortRead
+		}
+		data, rest, ok := parseString(rest)
+		if !ok {
+			return nil, errShortRead
+		}
+		t = append(t, tuple{string(name), string(data)})
+		in = rest
+	}
+	return t, nil
+}
+
+func parseCert(in []byte, privAlgo string) (*OpenSSHCertV01, error) {
+	nonce, rest, ok := parseString(in)
+	if !ok {
+		return nil, errShortRead
+	}
+	c := &OpenSSHCertV01{
+		Nonce: nonce,
+	}
+
+	c.Key, rest, ok = parsePubKey(rest, privAlgo)
+	if !ok {
+		return nil, errors.New("ssh: ParsePublicKey failed")
+	}
+
+	var g genericCertData
+	if err := Unmarshal(rest, &g); err != nil {
+		return nil, err
+	}
+	c.Serial = g.Serial
+	c.Type = g.Type
+	c.KeyId = g.KeyId
+
+	p := g.ValidPrincipals
+	for len(p) > 0 {
+		principal, rest, ok := parseString(p)
+		if !ok {
+			return nil, errShortRead
+		}
+		c.ValidPrincipals = append(c.ValidPrincipals, string(principal))
+		p = rest
+	}
+
+	c.ValidAfter = CertTime(g.ValidAfter)
+	c.ValidBefore = CertTime(g.ValidBefore)
+
+	var err error
+	c.CriticalOptions, err = parseTuples(g.CriticalOptions)
+	if err != nil {
+		return nil, err
+	}
+	c.Extensions, err = parseTuples(g.Extensions)
+	if err != nil {
+		return nil, err
+	}
+	c.Reserved = g.Reserved
+	k, rest, ok := ParsePublicKey(g.SignatureKey)
+	if !ok || len(rest) > 0 {
+		return nil, errors.New("ssh: signature key parse error")
+	}
+
+	c.SignatureKey = k
+	c.Signature, rest, ok = parseSignatureBody(g.Signature)
+	if !ok || len(rest) > 0 {
+		return nil, errors.New("ssh: signature parse error")
+	}
+
+	return c, nil
 }
 
 type openSSHCertSigner struct {
@@ -145,64 +257,43 @@ func certToPrivAlgo(algo string) string {
 	panic("unknown cert algorithm")
 }
 
-func (cert *OpenSSHCertV01) marshal(includeAlgo, includeSig bool) []byte {
-	algoName := cert.PublicKeyAlgo()
-	pubKey := cert.Key.Marshal()
-	sigKey := MarshalPublicKey(cert.SignatureKey)
-
-	var length int
-	if includeAlgo {
-		length += stringLength(len(algoName))
-	}
-	length += stringLength(len(cert.Nonce))
-	length += len(pubKey)
-	length += 8 // Length of Serial
-	length += 4 // Length of Type
-	length += stringLength(len(cert.KeyId))
-	length += lengthPrefixedNameListLength(cert.ValidPrincipals)
-	length += 8 // Length of ValidAfter
-	length += 8 // Length of ValidBefore
-	length += tupleListLength(cert.CriticalOptions)
-	length += tupleListLength(cert.Extensions)
-	length += stringLength(len(cert.Reserved))
-	length += stringLength(len(sigKey))
-	if includeSig {
-		length += signatureLength(cert.Signature)
-	}
-
-	ret := make([]byte, length)
-	r := ret
-	if includeAlgo {
-		r = marshalString(r, []byte(algoName))
-	}
-	r = marshalString(r, cert.Nonce)
-	copy(r, pubKey)
-	r = r[len(pubKey):]
-	r = marshalUint64(r, cert.Serial)
-	r = marshalUint32(r, cert.Type)
-	r = marshalString(r, []byte(cert.KeyId))
-	r = marshalLengthPrefixedNameList(r, cert.ValidPrincipals)
-	r = marshalUint64(r, uint64(cert.ValidAfter))
-	r = marshalUint64(r, uint64(cert.ValidBefore))
-	r = marshalTupleList(r, cert.CriticalOptions)
-	r = marshalTupleList(r, cert.Extensions)
-	r = marshalString(r, cert.Reserved)
-	r = marshalString(r, sigKey)
-	if includeSig {
-		r = marshalSignature(r, cert.Signature)
-	}
-	if len(r) > 0 {
-		panic("ssh: internal error, marshaling certificate did not fill the entire buffer")
-	}
-	return ret
-}
-
 func (cert *OpenSSHCertV01) BytesForSigning() []byte {
-	return cert.marshal(true, false)
+	c2 := *cert
+	c2.Signature = nil
+	out := MarshalPublicKey(&c2)
+	// Drop trailing signature length.
+	return out[:len(out)-4]
 }
 
-func (cert *OpenSSHCertV01) Marshal() []byte {
-	return cert.marshal(false, true)
+func (c *OpenSSHCertV01) Marshal() []byte {
+	generic := genericCertData{
+		Serial:          c.Serial,
+		Type:            c.Type,
+		KeyId:           c.KeyId,
+		ValidPrincipals: marshalStringList(c.ValidPrincipals),
+		ValidAfter:      uint64(c.ValidAfter),
+		ValidBefore:     uint64(c.ValidBefore),
+		CriticalOptions: marshalTuples(c.CriticalOptions),
+		Extensions:      marshalTuples(c.Extensions),
+		Reserved:        c.Reserved,
+		SignatureKey:    MarshalPublicKey(c.SignatureKey),
+	}
+	if c.Signature != nil {
+		generic.Signature = Marshal(*c.Signature)
+	}
+	genericBytes := Marshal(generic)
+
+	prefix := Marshal(struct {
+		Nonce []byte
+		Key   []byte `ssh:"rest"`
+	}{c.Nonce, c.Key.Marshal()})
+
+	result := make([]byte, len(prefix)+len(genericBytes))
+	dst := result
+	copy(dst, prefix)
+	dst = dst[len(prefix):]
+	copy(dst, genericBytes)
+	return result
 }
 
 func (c *OpenSSHCertV01) PublicKeyAlgo() string {
@@ -219,177 +310,6 @@ func (c *OpenSSHCertV01) PrivateKeyAlgo() string {
 
 func (c *OpenSSHCertV01) Verify(data []byte, sig []byte) bool {
 	return c.Key.Verify(data, sig)
-}
-
-func parseOpenSSHCertV01(in []byte, algo string) (out *OpenSSHCertV01, rest []byte, ok bool) {
-	cert := new(OpenSSHCertV01)
-
-	if cert.Nonce, in, ok = parseString(in); !ok {
-		return
-	}
-
-	privAlgo := certToPrivAlgo(algo)
-	cert.Key, in, ok = parsePubKey(in, privAlgo)
-	if !ok {
-		return
-	}
-
-	// We test PublicKeyAlgo to make sure we don't use some weird sub-cert.
-	if cert.Key.PublicKeyAlgo() != privAlgo {
-		ok = false
-		return
-	}
-
-	if cert.Serial, in, ok = parseUint64(in); !ok {
-		return
-	}
-
-	if cert.Type, in, ok = parseUint32(in); !ok {
-		return
-	}
-
-	keyId, in, ok := parseString(in)
-	if !ok {
-		return
-	}
-	cert.KeyId = string(keyId)
-
-	if cert.ValidPrincipals, in, ok = parseLengthPrefixedNameList(in); !ok {
-		return
-	}
-
-	va, in, ok := parseUint64(in)
-	if !ok {
-		return
-	}
-	cert.ValidAfter = CertTime(va)
-
-	vb, in, ok := parseUint64(in)
-	if !ok {
-		return
-	}
-	cert.ValidBefore = CertTime(vb)
-
-	if cert.CriticalOptions, in, ok = parseTupleList(in); !ok {
-		return
-	}
-
-	if cert.Extensions, in, ok = parseTupleList(in); !ok {
-		return
-	}
-
-	if cert.Reserved, in, ok = parseString(in); !ok {
-		return
-	}
-
-	sigKey, in, ok := parseString(in)
-	if !ok {
-		return
-	}
-	if cert.SignatureKey, _, ok = ParsePublicKey(sigKey); !ok {
-		return
-	}
-
-	if cert.Signature, in, ok = parseSignature(in); !ok {
-		return
-	}
-
-	ok = true
-	return cert, in, ok
-}
-
-func lengthPrefixedNameListLength(namelist []string) int {
-	length := 4 // length prefix for list
-	for _, name := range namelist {
-		length += 4 // length prefix for name
-		length += len(name)
-	}
-	return length
-}
-
-func marshalLengthPrefixedNameList(to []byte, namelist []string) []byte {
-	length := uint32(lengthPrefixedNameListLength(namelist) - 4)
-	to = marshalUint32(to, length)
-	for _, name := range namelist {
-		to = marshalString(to, []byte(name))
-	}
-	return to
-}
-
-func parseLengthPrefixedNameList(in []byte) (out []string, rest []byte, ok bool) {
-	list, rest, ok := parseString(in)
-	if !ok {
-		return
-	}
-
-	for len(list) > 0 {
-		var next []byte
-		if next, list, ok = parseString(list); !ok {
-			return nil, nil, false
-		}
-		out = append(out, string(next))
-	}
-	ok = true
-	return
-}
-
-func tupleListLength(tupleList []tuple) int {
-	length := 4 // length prefix for list
-	for _, t := range tupleList {
-		length += 4 // length prefix for t.Name
-		length += len(t.Name)
-		length += 4 // length prefix for t.Data
-		length += len(t.Data)
-	}
-	return length
-}
-
-func marshalTupleList(to []byte, tuplelist []tuple) []byte {
-	length := uint32(tupleListLength(tuplelist) - 4)
-	to = marshalUint32(to, length)
-	for _, t := range tuplelist {
-		to = marshalString(to, []byte(t.Name))
-		to = marshalString(to, []byte(t.Data))
-	}
-	return to
-}
-
-func parseTupleList(in []byte) (out []tuple, rest []byte, ok bool) {
-	list, rest, ok := parseString(in)
-	if !ok {
-		return
-	}
-
-	for len(list) > 0 {
-		var name, data []byte
-		var ok bool
-		name, list, ok = parseString(list)
-		if !ok {
-			return nil, nil, false
-		}
-		data, list, ok = parseString(list)
-		if !ok {
-			return nil, nil, false
-		}
-		out = append(out, tuple{string(name), string(data)})
-	}
-	ok = true
-	return
-}
-
-func signatureLength(sig *signature) int {
-	length := 4 // length prefix for signature
-	length += stringLength(len(sig.Format))
-	length += stringLength(len(sig.Blob))
-	return length
-}
-
-func marshalSignature(to []byte, sig *signature) []byte {
-	length := uint32(signatureLength(sig) - 4)
-	to = marshalUint32(to, length)
-	to = marshalString(to, []byte(sig.Format))
-	to = marshalString(to, sig.Blob)
-	return to
 }
 
 func parseSignatureBody(in []byte) (out *signature, rest []byte, ok bool) {

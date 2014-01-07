@@ -42,7 +42,11 @@ func parsePubKey(in []byte, algo string) (pubKey PublicKey, rest []byte, ok bool
 	case KeyAlgoECDSA256, KeyAlgoECDSA384, KeyAlgoECDSA521:
 		return parseECDSA(in)
 	case CertAlgoRSAv01, CertAlgoDSAv01, CertAlgoECDSA256v01, CertAlgoECDSA384v01, CertAlgoECDSA521v01:
-		return parseOpenSSHCertV01(in, algo)
+		cert, err := parseCert(in, certToPrivAlgo(algo))
+		if err != nil {
+			return nil, nil, false
+		}
+		return cert, nil, true
 	}
 	return nil, nil, false
 }
@@ -158,6 +162,8 @@ func ParseAuthorizedKey(in []byte) (out PublicKey, comment string, options []str
 // ParsePublicKey parses an SSH public key formatted for use in
 // the SSH wire protocol according to RFC 4253, section 6.6.
 func ParsePublicKey(in []byte) (out PublicKey, rest []byte, ok bool) {
+	// TODO(hanwen): drop rest return value.
+	// TODO(hanwen): use error return rather than bool.
 	algo, in, ok := parseString(in)
 	if !ok {
 		return
@@ -222,7 +228,6 @@ func (r *rsaPublicKey) PublicKeyAlgo() string {
 // parseRSA parses an RSA key according to RFC 4253, section 6.6.
 func parseRSA(in []byte) (out PublicKey, rest []byte, ok bool) {
 	key := new(rsa.PublicKey)
-
 	bigE, in, ok := parseInt(in)
 	if !ok || bigE.BitLen() > 24 {
 		return
