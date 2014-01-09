@@ -31,7 +31,7 @@ const (
 	HostCert = 2
 )
 
-type signature struct {
+type Signature struct {
 	Format string
 	Blob   []byte
 }
@@ -72,7 +72,7 @@ type OpenSSHCertV01 struct {
 	Extensions              map[string]string
 	Reserved                []byte
 	SignatureKey            PublicKey
-	Signature               *signature // TODO(hanwen): use public type
+	Signature               *Signature
 }
 
 // genericCertData holds the key-independent part of the cert data:
@@ -215,7 +215,7 @@ func NewCertSigner(cert *OpenSSHCertV01, signer Signer) (Signer, error) {
 	return &openSSHCertSigner{cert, signer}, nil
 }
 
-func (s *openSSHCertSigner) Sign(rand io.Reader, data []byte) ([]byte, error) {
+func (s *openSSHCertSigner) Sign(rand io.Reader, data []byte) (*Signature, error) {
 	return s.signer.Sign(rand, data)
 }
 
@@ -227,7 +227,7 @@ func (s *openSSHCertSigner) PublicKey() PublicKey {
 // the cert's Signature.Blob is the result of signing the cert bytes starting
 // from the algorithm string and going up to and including the SignatureKey.
 func validateOpenSSHCertV01Signature(cert *OpenSSHCertV01) bool {
-	return cert.SignatureKey.Verify(cert.BytesForSigning(), cert.Signature.Blob)
+	return cert.SignatureKey.Verify(cert.BytesForSigning(), cert.Signature)
 }
 
 // SignCert has an authority sign the certificate. It sets the
@@ -236,14 +236,11 @@ func (c *OpenSSHCertV01) SignCert(authority Signer) error {
 	pub := authority.PublicKey()
 	c.SignatureKey = pub
 	// Should get rand from some config?
-	blob, err := authority.Sign(rand.Reader, c.BytesForSigning())
+	sig, err := authority.Sign(rand.Reader, c.BytesForSigning())
 	if err != nil {
 		return err
 	}
-	c.Signature = &signature{
-		Format: pub.PrivateKeyAlgo(),
-		Blob:   blob,
-	}
+	c.Signature = sig
 	return nil
 }
 
@@ -313,21 +310,17 @@ func (c *OpenSSHCertV01) PublicKeyAlgo() string {
 	return algo
 }
 
-func (c *OpenSSHCertV01) PrivateKeyAlgo() string {
-	return c.Key.PrivateKeyAlgo()
-}
-
-func (c *OpenSSHCertV01) Verify(data []byte, sig []byte) bool {
+func (c *OpenSSHCertV01) Verify(data []byte, sig *Signature) bool {
 	return c.Key.Verify(data, sig)
 }
 
-func parseSignatureBody(in []byte) (out *signature, rest []byte, ok bool) {
+func parseSignatureBody(in []byte) (out *Signature, rest []byte, ok bool) {
 	var format []byte
 	if format, in, ok = parseString(in); !ok {
 		return
 	}
 
-	out = &signature{
+	out = &Signature{
 		Format: string(format),
 	}
 
@@ -338,7 +331,7 @@ func parseSignatureBody(in []byte) (out *signature, rest []byte, ok bool) {
 	return out, in, ok
 }
 
-func parseSignature(in []byte) (out *signature, rest []byte, ok bool) {
+func parseSignature(in []byte) (out *Signature, rest []byte, ok bool) {
 	var sigBytes []byte
 	if sigBytes, rest, ok = parseString(in); !ok {
 		return

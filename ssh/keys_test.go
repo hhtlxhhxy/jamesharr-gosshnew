@@ -55,11 +55,8 @@ func init() {
 		CriticalOptions: map[string]string{},
 		Extensions:      map[string]string{},
 	}
-	sigBytes, _ := rsaKey.Sign(rand.Reader, testCert.BytesForSigning())
-	testCert.Signature = &signature{
-		Format: testCert.SignatureKey.PublicKeyAlgo(),
-		Blob:   sigBytes,
-	}
+	sig, _ := rsaKey.Sign(rand.Reader, testCert.BytesForSigning())
+	testCert.Signature = sig
 	testCertKey = &testSigner{
 		Signer: ecdsaKey,
 		pub:    testCert,

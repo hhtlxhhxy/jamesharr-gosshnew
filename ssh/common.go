@@ -203,19 +203,6 @@ func (c *Config) setDefaults() {
 	}
 }
 
-// serialize a signed slice according to RFC 4254 6.6. The name should
-// be a key type name, rather than a cert type name.
-func serializeSignature(name string, sig []byte) []byte {
-	length := stringLength(len(name))
-	length += stringLength(len(sig))
-
-	ret := make([]byte, length)
-	r := marshalString(ret, []byte(name))
-	r = marshalString(r, sig)
-
-	return ret
-}
-
 // MarshalPublicKey serializes a supported key or certificate for use
 // by the SSH wire protocol. It can be used for comparison with the
 // pubkey argument of ServerConfig's PublicKeyCallback as well as for
@@ -231,27 +218,6 @@ func MarshalPublicKey(key PublicKey) []byte {
 	r := marshalString(ret, []byte(algoname))
 	copy(r, blob)
 	return ret
-}
-
-// pubAlgoToPrivAlgo returns the private key algorithm format name that
-// corresponds to a given public key algorithm format name.  For most
-// public keys, the private key algorithm name is the same.  For some
-// situations, such as openssh certificates, the private key algorithm and
-// public key algorithm names differ.  This accounts for those situations.
-func pubAlgoToPrivAlgo(pubAlgo string) string {
-	switch pubAlgo {
-	case CertAlgoRSAv01:
-		return KeyAlgoRSA
-	case CertAlgoDSAv01:
-		return KeyAlgoDSA
-	case CertAlgoECDSA256v01:
-		return KeyAlgoECDSA256
-	case CertAlgoECDSA384v01:
-		return KeyAlgoECDSA384
-	case CertAlgoECDSA521v01:
-		return KeyAlgoECDSA521
-	}
-	return pubAlgo
 }
 
 // buildDataSignedForAuth returns the data that is signed in order to prove

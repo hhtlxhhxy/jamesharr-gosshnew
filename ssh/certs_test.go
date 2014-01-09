@@ -53,7 +53,7 @@ func TestVerifyCert(t *testing.T) {
 	invalidCert := &OpenSSHCertV01{
 		Key:          rsaKey.PublicKey(),
 		SignatureKey: ecdsaKey.PublicKey(),
-		Signature:    &signature{},
+		Signature:    &Signature{},
 	}
 	if ok := validateOpenSSHCertV01Signature(invalidCert); ok {
 		t.Error("Invalid cert signature passed validation!")

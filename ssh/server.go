@@ -132,7 +132,7 @@ func signAndMarshal(k Signer, rand io.Reader, data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	return serializeSignature(k.PublicKey().PrivateKeyAlgo(), sig), nil
+	return Marshal(*sig), nil
 }
 
 // handshake performs key exchange and user authentication.
@@ -310,7 +310,7 @@ userAuthLoop:
 				// algorithm name that corresponds to algo with
 				// sig.Format.  This is usually the same, but
 				// for certs, the names differ.
-				if !isAcceptableAlgo(sig.Format) || pubAlgoToPrivAlgo(algo) != sig.Format {
+				if !isAcceptableAlgo(sig.Format) {
 					break
 				}
 				signedData := buildDataSignedForAuth(s.transport.getSessionID(), userAuthReq, algoBytes, pubKey)
@@ -319,7 +319,7 @@ userAuthLoop:
 					return err
 				}
 
-				if !key.Verify(signedData, sig.Blob) {
+				if !key.Verify(signedData, sig) {
 					return errors.New("ssh: signature verification failed")
 				}
 

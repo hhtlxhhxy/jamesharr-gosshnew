@@ -107,16 +107,12 @@ func TestAgent(t *testing.T) {
 		t.Fatalf("Sign: %v", err)
 	}
 
-	type Sig struct {
-		Algo string
-		Blob []byte
-	}
-	sig := Sig{}
+	var sig ssh.Signature
 	if err := ssh.Unmarshal(sigBytes, &sig); err != nil {
 		t.Fatalf("parseSignatureBody(%q) failed", sigBytes)
 	}
 
-	if !rsaKey.PublicKey().Verify(data, sig.Blob) {
+	if !rsaKey.PublicKey().Verify(data, &sig) {
 		t.Fatalf("key signature does not validate")
 	}
 }

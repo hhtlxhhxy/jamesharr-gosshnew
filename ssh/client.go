@@ -93,11 +93,8 @@ func verifyHostKeySignature(hostKeyAlgo string, result *kexResult) error {
 	if len(rest) > 0 || !ok {
 		return errors.New("ssh: signature parse error")
 	}
-	if sig.Format != hostKeyAlgo {
-		return fmt.Errorf("ssh: got signature type %q, want %q", sig.Format, hostKeyAlgo)
-	}
 
-	if !hostKey.Verify(result.H, sig.Blob) {
+	if !hostKey.Verify(result.H, sig) {
 		return errors.New("ssh: host key signature error")
 	}
 	return nil

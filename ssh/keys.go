@@ -188,9 +188,6 @@ func MarshalAuthorizedKey(key PublicKey) []byte {
 
 // PublicKey is an abstraction of different types of public keys.
 type PublicKey interface {
-	// PrivateKeyAlgo returns the name of the encryption system.
-	PrivateKeyAlgo() string
-
 	// PublicKeyAlgo returns the algorithm for the public key,
 	// which may be different from PrivateKeyAlgo for certificates.
 	PublicKeyAlgo() string
@@ -202,7 +199,7 @@ type PublicKey interface {
 
 	// Verify that sig is a signature on the given data using this
 	// key. This function will hash the data appropriately first.
-	Verify(data []byte, sigBlob []byte) bool
+	Verify(data []byte, sig *Signature) bool
 }
 
 // A Signer is can create signatures that verify against a public key.
@@ -212,17 +209,13 @@ type Signer interface {
 
 	// Sign returns raw signature for the given data. This method
 	// will apply the hash specified for the keytype to the data.
-	Sign(rand io.Reader, data []byte) ([]byte, error)
+	Sign(rand io.Reader, data []byte) (*Signature, error)
 }
 
 type rsaPublicKey rsa.PublicKey
 
-func (r *rsaPublicKey) PrivateKeyAlgo() string {
-	return "ssh-rsa"
-}
-
 func (r *rsaPublicKey) PublicKeyAlgo() string {
-	return r.PrivateKeyAlgo()
+	return "ssh-rsa"
 }
 
 // parseRSA parses an RSA key according to RFC 4253, section 6.6.
@@ -261,11 +254,14 @@ func (r *rsaPublicKey) Marshal() []byte {
 	return ret
 }
 
-func (r *rsaPublicKey) Verify(data []byte, sig []byte) bool {
+func (r *rsaPublicKey) Verify(data []byte, sig *Signature) bool {
+	if sig.Format != r.PublicKeyAlgo() {
+		return false
+	}
 	h := crypto.SHA1.New()
 	h.Write(data)
 	digest := h.Sum(nil)
-	return rsa.VerifyPKCS1v15((*rsa.PublicKey)(r), crypto.SHA1, digest, sig) == nil
+	return rsa.VerifyPKCS1v15((*rsa.PublicKey)(r), crypto.SHA1, digest, sig.Blob) == nil
 }
 
 type rsaPrivateKey struct {
@@ -276,21 +272,24 @@ func (r *rsaPrivateKey) PublicKey() PublicKey {
 	return (*rsaPublicKey)(&r.PrivateKey.PublicKey)
 }
 
-func (r *rsaPrivateKey) Sign(rand io.Reader, data []byte) ([]byte, error) {
+func (r *rsaPrivateKey) Sign(rand io.Reader, data []byte) (*Signature, error) {
 	h := crypto.SHA1.New()
 	h.Write(data)
 	digest := h.Sum(nil)
-	return rsa.SignPKCS1v15(rand, r.PrivateKey, crypto.SHA1, digest)
+	blob, err := rsa.SignPKCS1v15(rand, r.PrivateKey, crypto.SHA1, digest)
+	if err != nil {
+		return nil, err
+	}
+	return &Signature{
+		Format: r.PublicKey().PublicKeyAlgo(),
+		Blob:   blob,
+	}, nil
 }
 
 type dsaPublicKey dsa.PublicKey
 
-func (r *dsaPublicKey) PrivateKeyAlgo() string {
-	return "ssh-dss"
-}
-
 func (r *dsaPublicKey) PublicKeyAlgo() string {
-	return r.PrivateKeyAlgo()
+	return "ssh-dss"
 }
 
 // parseDSA parses an DSA key according to RFC 4253, section 6.6.
@@ -332,7 +331,10 @@ func (r *dsaPublicKey) Marshal() []byte {
 	return ret
 }
 
-func (k *dsaPublicKey) Verify(data []byte, sigBlob []byte) bool {
+func (k *dsaPublicKey) Verify(data []byte, sig *Signature) bool {
+	if sig.Format != k.PublicKeyAlgo() {
+		return false
+	}
 	h := crypto.SHA1.New()
 	h.Write(data)
 	digest := h.Sum(nil)
@@ -342,11 +344,11 @@ func (k *dsaPublicKey) Verify(data []byte, sigBlob []byte) bool {
 	// r, followed by s (which are 160-bit integers, without lengths or
 	// padding, unsigned, and in network byte order).
 	// For DSS purposes, sig.Blob should be exactly 40 bytes in length.
-	if len(sigBlob) != 40 {
+	if len(sig.Blob) != 40 {
 		return false
 	}
-	r := new(big.Int).SetBytes(sigBlob[:20])
-	s := new(big.Int).SetBytes(sigBlob[20:])
+	r := new(big.Int).SetBytes(sig.Blob[:20])
+	s := new(big.Int).SetBytes(sig.Blob[20:])
 	return dsa.Verify((*dsa.PublicKey)(k), digest, r, s)
 }
 
@@ -358,7 +360,7 @@ func (k *dsaPrivateKey) PublicKey() PublicKey {
 	return (*dsaPublicKey)(&k.PrivateKey.PublicKey)
 }
 
-func (k *dsaPrivateKey) Sign(rand io.Reader, data []byte) ([]byte, error) {
+func (k *dsaPrivateKey) Sign(rand io.Reader, data []byte) (*Signature, error) {
 	h := crypto.SHA1.New()
 	h.Write(data)
 	digest := h.Sum(nil)
@@ -373,12 +375,16 @@ func (k *dsaPrivateKey) Sign(rand io.Reader, data []byte) ([]byte, error) {
 
 	copy(sig[20-len(rb):20], rb)
 	copy(sig[40-len(sb):], sb)
-	return sig, nil
+
+	return &Signature{
+		Format: k.PublicKey().PublicKeyAlgo(),
+		Blob:   sig,
+	}, nil
 }
 
 type ecdsaPublicKey ecdsa.PublicKey
 
-func (key *ecdsaPublicKey) PrivateKeyAlgo() string {
+func (key *ecdsaPublicKey) PublicKeyAlgo() string {
 	return "ecdsa-sha2-" + key.nistID()
 }
 
@@ -409,10 +415,6 @@ func ecHash(curve elliptic.Curve) crypto.Hash {
 		return crypto.SHA384
 	}
 	return crypto.SHA512
-}
-
-func (key *ecdsaPublicKey) PublicKeyAlgo() string {
-	return key.PrivateKeyAlgo()
 }
 
 // parseECDSA parses an ECDSA key according to RFC 5656, section 3.1.
@@ -462,7 +464,11 @@ func (key *ecdsaPublicKey) Marshal() []byte {
 	return ret
 }
 
-func (key *ecdsaPublicKey) Verify(data []byte, sigBlob []byte) bool {
+func (key *ecdsaPublicKey) Verify(data []byte, sig *Signature) bool {
+	if sig.Format != key.PublicKeyAlgo() {
+		return false
+	}
+
 	h := ecHash(key.Curve).New()
 	h.Write(data)
 	digest := h.Sum(nil)
@@ -471,7 +477,7 @@ func (key *ecdsaPublicKey) Verify(data []byte, sigBlob []byte) bool {
 	// The ecdsa_signature_blob value has the following specific encoding:
 	//    mpint    r
 	//    mpint    s
-	r, rest, ok := parseInt(sigBlob)
+	r, rest, ok := parseInt(sig.Blob)
 	if !ok {
 		return false
 	}
@@ -490,7 +496,7 @@ func (k *ecdsaPrivateKey) PublicKey() PublicKey {
 	return (*ecdsaPublicKey)(&k.PrivateKey.PublicKey)
 }
 
-func (k *ecdsaPrivateKey) Sign(rand io.Reader, data []byte) ([]byte, error) {
+func (k *ecdsaPrivateKey) Sign(rand io.Reader, data []byte) (*Signature, error) {
 	h := ecHash(k.PrivateKey.PublicKey.Curve).New()
 	h.Write(data)
 	digest := h.Sum(nil)
@@ -502,7 +508,10 @@ func (k *ecdsaPrivateKey) Sign(rand io.Reader, data []byte) ([]byte, error) {
 	sig := make([]byte, intLength(r)+intLength(s))
 	rest := marshalInt(sig, r)
 	marshalInt(rest, s)
-	return sig, nil
+	return &Signature{
+		Format: k.PublicKey().PublicKeyAlgo(),
+		Blob:   sig,
+	}, nil
 }
 
 // NewPrivateKey takes a pointer to rsa, dsa or ecdsa PrivateKey

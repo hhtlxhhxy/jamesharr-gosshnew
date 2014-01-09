@@ -318,22 +318,18 @@ func (s *agentKeyringSigner) PublicKey() ssh.PublicKey {
 	return s.pub
 }
 
-func (s *agentKeyringSigner) Sign(rand io.Reader, data []byte) ([]byte, error) {
+func (s *agentKeyringSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
 	// The agent has its own entropy source, so the rand argument is ignored.
 	encoded, err := s.agent.Sign(s.pub, data)
 	if err != nil {
 		return nil, err
 	}
-	// TODO(hanwen): this should move into Sign?
-	var sig struct {
-		Algo string
-		Blob []byte
-	}
+	var sig ssh.Signature
 	if err := ssh.Unmarshal(encoded, &sig); err != nil {
 		return nil, err
 	}
 
-	return sig.Blob, nil
+	return &sig, nil
 }
 
 // Signers implements the ssh.ClientKeyring interface.
