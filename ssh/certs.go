@@ -140,9 +140,10 @@ func parseCert(in []byte, privAlgo string) (*OpenSSHCertV01, error) {
 		Nonce: nonce,
 	}
 
-	c.Key, rest, ok = parsePubKey(rest, privAlgo)
-	if !ok {
-		return nil, errors.New("ssh: ParsePublicKey failed")
+	var err error
+	c.Key, rest, err = parsePubKey(rest, privAlgo)
+	if err != nil {
+		return nil, err
 	}
 
 	var g genericCertData
@@ -166,7 +167,6 @@ func parseCert(in []byte, privAlgo string) (*OpenSSHCertV01, error) {
 	c.ValidAfter = CertTime(g.ValidAfter)
 	c.ValidBefore = CertTime(g.ValidBefore)
 
-	var err error
 	c.CriticalOptions, err = parseTuples(g.CriticalOptions)
 	if err != nil {
 		return nil, err
@@ -176,9 +176,12 @@ func parseCert(in []byte, privAlgo string) (*OpenSSHCertV01, error) {
 		return nil, err
 	}
 	c.Reserved = g.Reserved
-	k, rest, ok := ParsePublicKey(g.SignatureKey)
-	if !ok || len(rest) > 0 {
-		return nil, errors.New("ssh: signature key parse error")
+	k, rest, err := ParsePublicKey(g.SignatureKey)
+	if err != nil {
+		return nil, err
+	}
+	if len(rest) > 0 {
+		return nil, errors.New("ssh: trailing junk after signature key")
 	}
 
 	c.SignatureKey = k

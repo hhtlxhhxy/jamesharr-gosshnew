@@ -82,9 +82,9 @@ func TestKeyMarshalParse(t *testing.T) {
 	keys := []Signer{rsaKey, dsaKey, ecdsaKey, ecdsa384Key, ecdsa521Key, testCertKey}
 	for _, priv := range keys {
 		pub := priv.PublicKey()
-		roundtrip, rest, ok := ParsePublicKey(MarshalPublicKey(pub))
-		if !ok {
-			t.Errorf("ParsePublicKey(%T) failed", pub)
+		roundtrip, rest, err := ParsePublicKey(MarshalPublicKey(pub))
+		if err != nil {
+			t.Errorf("ParsePublicKey(%T): %v", pub, err)
 		}
 
 		if len(rest) > 0 {
@@ -247,9 +247,9 @@ func TestMarshalParsePublicKey(t *testing.T) {
 		t.Errorf("got %v, expected %v", actualFields, expectedFields)
 	}
 
-	actPub, _, _, _, ok := ParseAuthorizedKey([]byte(line))
-	if !ok {
-		t.Fatalf("cannot parse %v", line)
+	actPub, _, _, _, err := ParseAuthorizedKey([]byte(line))
+	if err != nil {
+		t.Fatalf("cannot parse %v: %v", line, err)
 	}
 	if !reflect.DeepEqual(actPub, pub) {
 		t.Errorf("got %v, expected %v", actPub, pub)
@@ -269,7 +269,9 @@ func testAuthorizedKeys(t *testing.T, authKeys []byte, expected []authResult) {
 	var values []authResult
 	for len(rest) > 0 {
 		var r authResult
-		r.pubKey, r.comments, r.options, rest, r.ok = ParseAuthorizedKey(rest)
+		var err error
+		r.pubKey, r.comments, r.options, rest, err = ParseAuthorizedKey(rest)
+		r.ok = (err == nil)
 		r.rest = string(rest)
 		values = append(values, r)
 	}
@@ -355,8 +357,8 @@ env="HOME=/home/root",shared-control ssh-rsa ` + pubSerialized + ` user@host`)
 
 func TestInvalidEntry(t *testing.T) {
 	authInvalid := []byte(`ssh-rsa`)
-	_, _, _, _, ok := ParseAuthorizedKey(authInvalid)
-	if ok {
-		t.Errorf("Expected invalid entry, returned valid entry")
+	_, _, _, _, err := ParseAuthorizedKey(authInvalid)
+	if err == nil {
+		t.Errorf("got valid entry for %q", authInvalid)
 	}
 }

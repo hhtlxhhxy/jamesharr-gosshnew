@@ -16,15 +16,15 @@ var exampleSSHCert = `ssh-rsa-cert-v01@openssh.com AAAAHHNzaC1yc2EtY2VydC12MDFAb
 func TestParseCert(t *testing.T) {
 	authKeyBytes := []byte(exampleSSHCert)
 
-	key, _, _, rest, ok := ParseAuthorizedKey(authKeyBytes)
-	if !ok {
-		t.Fatalf("could not parse certificate")
+	key, _, _, rest, err := ParseAuthorizedKey(authKeyBytes)
+	if err != nil {
+		t.Fatalf("ParseAuthorizedKey: %v", err)
 	}
 	if len(rest) > 0 {
 		t.Errorf("rest: got %q, want empty", rest)
 	}
 
-	if _, ok = key.(*OpenSSHCertV01); !ok {
+	if _, ok := key.(*OpenSSHCertV01); !ok {
 		t.Fatalf("got %#v, want *OpenSSHCertV01", key)
 	}
 
@@ -38,9 +38,9 @@ func TestParseCert(t *testing.T) {
 }
 
 func TestVerifyCert(t *testing.T) {
-	key, _, _, _, ok := ParseAuthorizedKey([]byte(exampleSSHCert))
-	if !ok {
-		t.Fatalf("ParseAuthorizedKey failed")
+	key, _, _, _, err := ParseAuthorizedKey([]byte(exampleSSHCert))
+	if err != nil {
+		t.Fatalf("ParseAuthorizedKey: %v", err)
 	}
 	validCert, ok := key.(*OpenSSHCertV01)
 	if !ok {

@@ -314,9 +314,9 @@ userAuthLoop:
 					break
 				}
 				signedData := buildDataSignedForAuth(s.transport.getSessionID(), userAuthReq, algoBytes, pubKey)
-				key, _, ok := ParsePublicKey(pubKey)
-				if !ok {
-					return ParseError{msgUserAuthRequest}
+				key, _, err := ParsePublicKey(pubKey)
+				if err != nil {
+					return err
 				}
 
 				if !key.Verify(signedData, sig.Blob) {

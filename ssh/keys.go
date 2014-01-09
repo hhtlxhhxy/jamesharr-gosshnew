@@ -33,7 +33,7 @@ const (
 
 // parsePubKey parses a public key of the given algorithm.
 // Use ParsePublicKey for keys with prepended algorithm.
-func parsePubKey(in []byte, algo string) (pubKey PublicKey, rest []byte, ok bool) {
+func parsePubKey(in []byte, algo string) (pubKey PublicKey, rest []byte, err error) {
 	switch algo {
 	case KeyAlgoRSA:
 		return parseRSA(in)
@@ -44,17 +44,17 @@ func parsePubKey(in []byte, algo string) (pubKey PublicKey, rest []byte, ok bool
 	case CertAlgoRSAv01, CertAlgoDSAv01, CertAlgoECDSA256v01, CertAlgoECDSA384v01, CertAlgoECDSA521v01:
 		cert, err := parseCert(in, certToPrivAlgo(algo))
 		if err != nil {
-			return nil, nil, false
+			return nil, nil, err
 		}
-		return cert, nil, true
+		return cert, nil, nil
 	}
-	return nil, nil, false
+	return nil, nil, fmt.Errorf("unknown key algorithm: %v", err)
 }
 
 // parseAuthorizedKey parses a public key in OpenSSH authorized_keys format
 // (see sshd(8) manual page) once the options and key type fields have been
 // removed.
-func parseAuthorizedKey(in []byte) (out PublicKey, comment string, ok bool) {
+func parseAuthorizedKey(in []byte) (out PublicKey, comment string, err error) {
 	in = bytes.TrimSpace(in)
 
 	i := bytes.IndexAny(in, " \t")
@@ -66,20 +66,20 @@ func parseAuthorizedKey(in []byte) (out PublicKey, comment string, ok bool) {
 	key := make([]byte, base64.StdEncoding.DecodedLen(len(base64Key)))
 	n, err := base64.StdEncoding.Decode(key, base64Key)
 	if err != nil {
-		return
+		return nil, "", err
 	}
 	key = key[:n]
-	out, _, ok = ParsePublicKey(key)
-	if !ok {
-		return nil, "", false
+	out, _, err = ParsePublicKey(key)
+	if err != nil {
+		return nil, "", err
 	}
 	comment = string(bytes.TrimSpace(in[i:]))
-	return
+	return out, comment, nil
 }
 
 // ParseAuthorizedKeys parses a public key from an authorized_keys
 // file used in OpenSSH according to the sshd(8) manual page.
-func ParseAuthorizedKey(in []byte) (out PublicKey, comment string, options []string, rest []byte, ok bool) {
+func ParseAuthorizedKey(in []byte) (out PublicKey, comment string, options []string, rest []byte, err error) {
 	for len(in) > 0 {
 		end := bytes.IndexByte(in, '\n')
 		if end != -1 {
@@ -106,8 +106,8 @@ func ParseAuthorizedKey(in []byte) (out PublicKey, comment string, options []str
 			continue
 		}
 
-		if out, comment, ok = parseAuthorizedKey(in[i:]); ok {
-			return
+		if out, comment, err = parseAuthorizedKey(in[i:]); err == nil {
+			return out, comment, options, rest, nil
 		}
 
 		// No key type recognised. Maybe there's an options field at
@@ -147,26 +147,26 @@ func ParseAuthorizedKey(in []byte) (out PublicKey, comment string, options []str
 			continue
 		}
 
-		if out, comment, ok = parseAuthorizedKey(in[i:]); ok {
+		if out, comment, err = parseAuthorizedKey(in[i:]); err == nil {
 			options = candidateOptions
-			return
+			return out, comment, options, rest, nil
 		}
 
 		in = rest
 		continue
 	}
 
-	return
+	return nil, "", nil, nil, errors.New("ssh: no key found")
 }
 
 // ParsePublicKey parses an SSH public key formatted for use in
 // the SSH wire protocol according to RFC 4253, section 6.6.
-func ParsePublicKey(in []byte) (out PublicKey, rest []byte, ok bool) {
+func ParsePublicKey(in []byte) (out PublicKey, rest []byte, err error) {
 	// TODO(hanwen): drop rest return value.
 	// TODO(hanwen): use error return rather than bool.
 	algo, in, ok := parseString(in)
 	if !ok {
-		return
+		return nil, nil, errShortRead
 	}
 
 	return parsePubKey(in, string(algo))
@@ -226,25 +226,26 @@ func (r *rsaPublicKey) PublicKeyAlgo() string {
 }
 
 // parseRSA parses an RSA key according to RFC 4253, section 6.6.
-func parseRSA(in []byte) (out PublicKey, rest []byte, ok bool) {
+func parseRSA(in []byte) (out PublicKey, rest []byte, err error) {
 	key := new(rsa.PublicKey)
 	bigE, in, ok := parseInt(in)
-	if !ok || bigE.BitLen() > 24 {
-		return
+	if !ok {
+		return nil, nil, errShortRead
+	}
+	if bigE.BitLen() > 24 {
+		return nil, nil, errors.New("ssh: exponent too large")
 	}
 	e := bigE.Int64()
 	if e < 3 || e&1 == 0 {
-		ok = false
-		return
+		return nil, nil, errors.New("ssh: incorrect exponent")
 	}
 	key.E = int(e)
 
 	if key.N, in, ok = parseInt(in); !ok {
-		return
+		return nil, nil, errShortRead
 	}
 
-	ok = true
-	return (*rsaPublicKey)(key), in, ok
+	return (*rsaPublicKey)(key), in, nil
 }
 
 func (r *rsaPublicKey) Marshal() []byte {
@@ -293,27 +294,26 @@ func (r *dsaPublicKey) PublicKeyAlgo() string {
 }
 
 // parseDSA parses an DSA key according to RFC 4253, section 6.6.
-func parseDSA(in []byte) (out PublicKey, rest []byte, ok bool) {
+func parseDSA(in []byte) (out PublicKey, rest []byte, err error) {
 	key := new(dsa.PublicKey)
-
+	var ok bool
 	if key.P, in, ok = parseInt(in); !ok {
-		return
+		return nil, nil, errShortRead
 	}
 
 	if key.Q, in, ok = parseInt(in); !ok {
-		return
+		return nil, nil, errShortRead
 	}
 
 	if key.G, in, ok = parseInt(in); !ok {
-		return
+		return nil, nil, errShortRead
 	}
 
 	if key.Y, in, ok = parseInt(in); !ok {
-		return
+		return nil, nil, errShortRead
 	}
 
-	ok = true
-	return (*dsaPublicKey)(key), in, ok
+	return (*dsaPublicKey)(key), in, nil
 }
 
 func (r *dsaPublicKey) Marshal() []byte {
@@ -416,10 +416,11 @@ func (key *ecdsaPublicKey) PublicKeyAlgo() string {
 }
 
 // parseECDSA parses an ECDSA key according to RFC 5656, section 3.1.
-func parseECDSA(in []byte) (out PublicKey, rest []byte, ok bool) {
+func parseECDSA(in []byte) (out PublicKey, rest []byte, err error) {
 	var identifier []byte
+	var ok bool
 	if identifier, in, ok = parseString(in); !ok {
-		return
+		return nil, nil, errShortRead
 	}
 
 	key := new(ecdsa.PublicKey)
@@ -432,21 +433,19 @@ func parseECDSA(in []byte) (out PublicKey, rest []byte, ok bool) {
 	case "nistp521":
 		key.Curve = elliptic.P521()
 	default:
-		ok = false
-		return
+		return nil, nil, errors.New("ssh: unsupported curve")
 	}
 
 	var keyBytes []byte
 	if keyBytes, in, ok = parseString(in); !ok {
-		return
+		return nil, nil, errShortRead
 	}
 
 	key.X, key.Y = elliptic.Unmarshal(key.Curve, keyBytes)
 	if key.X == nil || key.Y == nil {
-		ok = false
-		return
+		return nil, nil, errors.New("ssh: invalid curve point")
 	}
-	return (*ecdsaPublicKey)(key), in, ok
+	return (*ecdsaPublicKey)(key), in, nil
 }
 
 func (key *ecdsaPublicKey) Marshal() []byte {
