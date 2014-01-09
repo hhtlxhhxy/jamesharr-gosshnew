@@ -52,6 +52,8 @@ func init() {
 		ValidBefore:     CertTimeInfinity,               // The end of currently representable time.
 		Reserved:        []byte{},                       // To pass reflect.DeepEqual after marshal & parse, this must be non-nil
 		SignatureKey:    rsaKey.PublicKey(),
+		CriticalOptions: map[string]string{},
+		Extensions:      map[string]string{},
 	}
 	sigBytes, _ := rsaKey.Sign(rand.Reader, testCert.BytesForSigning())
 	testCert.Signature = &signature{

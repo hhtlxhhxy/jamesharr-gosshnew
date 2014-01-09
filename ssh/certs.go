@@ -8,7 +8,9 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
+	"sort"
 	"time"
 )
 
@@ -32,11 +34,6 @@ const (
 type signature struct {
 	Format string
 	Blob   []byte
-}
-
-type tuple struct {
-	Name string
-	Data string
 }
 
 const (
@@ -71,8 +68,8 @@ type OpenSSHCertV01 struct {
 	KeyId                   string
 	ValidPrincipals         []string
 	ValidAfter, ValidBefore CertTime
-	CriticalOptions         []tuple // TODO(hanwen): use map type instead.
-	Extensions              []tuple // TODO(hanwen): use map type instead.
+	CriticalOptions         map[string]string
+	Extensions              map[string]string
 	Reserved                []byte
 	SignatureKey            PublicKey
 	Signature               *signature // TODO(hanwen): use public type
@@ -104,20 +101,25 @@ func marshalStringList(namelist []string) []byte {
 	return to
 }
 
-func marshalTuples(tups []tuple) []byte {
+func marshalTuples(tups map[string]string) []byte {
+	keys := make([]string, 0, len(tups))
+	for k := range tups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	var r []byte
-	// TODO(hanwen): fields should be sorted lexicographically
-	for _, t := range tups {
-		s := struct{ K, V string }{t.Name, t.Data}
+	for _, k := range keys {
+		s := struct{ K, V string }{k, tups[k]}
 		r = append(r, Marshal(s)...)
 	}
 	return r
 }
 
-func parseTuples(in []byte) ([]tuple, error) {
-	var t []tuple
+func parseTuples(in []byte) (map[string]string, error) {
+	tups := map[string]string{}
 	for len(in) > 0 {
-		name, rest, ok := parseString(in)
+		nameBytes, rest, ok := parseString(in)
 		if !ok {
 			return nil, errShortRead
 		}
@@ -125,10 +127,14 @@ func parseTuples(in []byte) ([]tuple, error) {
 		if !ok {
 			return nil, errShortRead
 		}
-		t = append(t, tuple{string(name), string(data)})
+		name := string(nameBytes)
+		if _, ok := tups[name]; ok {
+			return nil, fmt.Errorf("duplicate key %s", name)
+		}
+		tups[name] = string(data)
 		in = rest
 	}
-	return t, nil
+	return tups, nil
 }
 
 func parseCert(in []byte, privAlgo string) (*OpenSSHCertV01, error) {
