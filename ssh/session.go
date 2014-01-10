@@ -137,6 +137,11 @@ type Session struct {
 	// true if pipe method is active
 	stdinpipe, stdoutpipe, stderrpipe bool
 
+	// stdinPipeWriter is non-nil if StdinPipe has not been called
+	// and Stdin was specified by the user; it is the write end of
+	// a pipe connecting Session.Stdin to the stdin channel.
+	stdinPipeWriter io.WriteCloser
+
 	exitStatus chan error
 }
 
@@ -368,6 +373,9 @@ func (s *Session) Wait() error {
 	}
 	waitErr := <-s.exitStatus
 
+	if s.stdinPipeWriter != nil {
+		s.stdinPipeWriter.Close()
+	}
 	var copyError error
 	for _ = range s.copyFuncs {
 		if err := <-s.errors; err != nil && copyError == nil {
@@ -431,11 +439,19 @@ func (s *Session) stdin() {
 	if s.stdinpipe {
 		return
 	}
+	var stdin io.Reader
 	if s.Stdin == nil {
-		s.Stdin = new(bytes.Buffer)
+		stdin = new(bytes.Buffer)
+	} else {
+		r, w := io.Pipe()
+		go func() {
+			_, err := io.Copy(w, s.Stdin)
+			w.CloseWithError(err)
+		}()
+		stdin, s.stdinPipeWriter = r, w
 	}
 	s.copyFuncs = append(s.copyFuncs, func() error {
-		_, err := io.Copy(s.ch, s.Stdin)
+		_, err := io.Copy(s.ch, stdin)
 		if err1 := s.ch.CloseWrite(); err == nil && err1 != io.EOF {
 			err = err1
 		}

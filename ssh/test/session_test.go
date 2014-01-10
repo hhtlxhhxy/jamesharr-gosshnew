@@ -11,6 +11,7 @@ package test
 import (
 	"bytes"
 	"code.google.com/p/gosshnew/ssh"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -51,6 +52,53 @@ func TestHostKeyCheck(t *testing.T) {
 		t.Fatalf("dial should have failed.")
 	} else if !strings.Contains(err.Error(), "host key mismatch") {
 		t.Fatalf("'host key mismatch' not found in %v", err)
+	}
+}
+
+func TestRunCommandStdin(t *testing.T) {
+	server := newServer(t)
+	defer server.Shutdown()
+	conn := server.Dial(clientConfig())
+	defer conn.Close()
+
+	session, err := conn.NewSession()
+	if err != nil {
+		t.Fatalf("session failed: %v", err)
+	}
+	defer session.Close()
+
+	r, w := io.Pipe()
+	defer r.Close()
+	defer w.Close()
+	session.Stdin = r
+
+	err = session.Run("true")
+	if err != nil {
+		t.Fatalf("session failed: %v", err)
+	}
+}
+
+func TestRunCommandStdinError(t *testing.T) {
+	server := newServer(t)
+	defer server.Shutdown()
+	conn := server.Dial(clientConfig())
+	defer conn.Close()
+
+	session, err := conn.NewSession()
+	if err != nil {
+		t.Fatalf("session failed: %v", err)
+	}
+	defer session.Close()
+
+	r, w := io.Pipe()
+	defer r.Close()
+	session.Stdin = r
+	pipeErr := errors.New("closing write end of pipe")
+	w.CloseWithError(pipeErr)
+
+	err = session.Run("true")
+	if err != pipeErr {
+		t.Fatalf("expected %v, found %v", pipeErr, err)
 	}
 }
 
