@@ -159,7 +159,7 @@ func TestAuth(t *testing.T) {
 	serverConf := ssh.ServerConfig{}
 	serverConf.AddHostKey(rsaKey)
 	serverConf.PublicKeyCallback = func(c ssh.ConnMetadata, algo string, pubkey []byte) bool {
-		return bytes.Equal(pubkey, ssh.MarshalPublicKey(rsaKey.PublicKey()))
+		return bytes.Equal(pubkey, rsaKey.PublicKey().Marshal())
 	}
 
 	go func() {

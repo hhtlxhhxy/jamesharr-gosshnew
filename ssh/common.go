@@ -203,23 +203,6 @@ func (c *Config) setDefaults() {
 	}
 }
 
-// MarshalPublicKey serializes a supported key or certificate for use
-// by the SSH wire protocol. It can be used for comparison with the
-// pubkey argument of ServerConfig's PublicKeyCallback as well as for
-// generating an authorized_keys or host_keys file.
-func MarshalPublicKey(key PublicKey) []byte {
-	// See also RFC 4253 6.6.
-	algoname := key.PublicKeyAlgo()
-	blob := key.Marshal()
-
-	length := stringLength(len(algoname))
-	length += len(blob)
-	ret := make([]byte, length)
-	r := marshalString(ret, []byte(algoname))
-	copy(r, blob)
-	return ret
-}
-
 // buildDataSignedForAuth returns the data that is signed in order to prove
 // possession of a private key. See RFC 4252, section 7.
 func buildDataSignedForAuth(sessionId []byte, req userAuthRequestMsg, algo, pubKey []byte) []byte {

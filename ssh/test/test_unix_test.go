@@ -117,7 +117,7 @@ func (k *storedHostKey) Add(key ssh.PublicKey) {
 	if k.keys == nil {
 		k.keys = map[string][]byte{}
 	}
-	k.keys[key.PublicKeyAlgo()] = ssh.MarshalPublicKey(key)
+	k.keys[key.PublicKeyAlgo()] = key.Marshal()
 }
 
 func (k *storedHostKey) Check(addr string, remote net.Addr, algo string, key []byte) error {

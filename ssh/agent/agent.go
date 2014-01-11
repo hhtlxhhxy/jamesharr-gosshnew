@@ -223,7 +223,7 @@ func (ac *AgentClient) List() ([]*AgentKey, error) {
 // in [PROTOCOL.agent] section 2.6.2.
 func (ac *AgentClient) Sign(key ssh.PublicKey, data []byte) ([]byte, error) {
 	req := ssh.Marshal(signRequestAgentMsg{
-		KeyBlob: ssh.MarshalPublicKey(key),
+		KeyBlob: key.Marshal(),
 		Data:    data,
 	})
 

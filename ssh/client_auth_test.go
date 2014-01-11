@@ -72,7 +72,7 @@ var (
 		},
 		PublicKeyCallback: func(conn ConnMetadata, algo string, pubkey []byte) bool {
 			key := rsaKey.PublicKey()
-			expected := MarshalPublicKey(key)
+			expected := key.Marshal()
 			algoname := key.PublicKeyAlgo()
 			return conn.User() == "testuser" && algo == algoname && bytes.Equal(pubkey, expected)
 		},

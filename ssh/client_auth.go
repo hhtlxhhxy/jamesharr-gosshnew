@@ -201,7 +201,7 @@ func (cb publicKeyCallback) auth(session []byte, user string, c packetConn, rand
 	for _, signer := range validKeys {
 		pub := signer.PublicKey()
 
-		pubkey := MarshalPublicKey(pub)
+		pubkey := pub.Marshal()
 		pubAlgo := pub.PublicKeyAlgo()
 		sign, err := signer.Sign(rand, buildDataSignedForAuth(session, userAuthRequestMsg{
 			User:    user,
@@ -242,7 +242,7 @@ func (cb publicKeyCallback) auth(session []byte, user string, c packetConn, rand
 
 // validateKey validates the key provided it is acceptable to the server.
 func validateKey(key PublicKey, user string, c packetConn) (bool, error) {
-	pubkey := MarshalPublicKey(key)
+	pubkey := key.Marshal()
 	algoname := key.PublicKeyAlgo()
 	msg := publickeyAuthMsg{
 		User:     user,
@@ -260,7 +260,7 @@ func validateKey(key PublicKey, user string, c packetConn) (bool, error) {
 }
 
 func confirmKeyAck(key PublicKey, c packetConn) (bool, error) {
-	pubkey := MarshalPublicKey(key)
+	pubkey := key.Marshal()
 	algoname := key.PublicKeyAlgo()
 
 	for {

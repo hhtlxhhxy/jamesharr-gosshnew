@@ -153,7 +153,7 @@ func (group *dhGroup) Server(c packetConn, randSource io.Reader, magics *handsha
 		return nil, err
 	}
 
-	hostKeyBytes := MarshalPublicKey(priv.PublicKey())
+	hostKeyBytes := priv.PublicKey().Marshal()
 
 	h := hashFunc.New()
 	magics.write(h)
@@ -314,7 +314,7 @@ func (kex *ecdh) Server(c packetConn, rand io.Reader, magics *handshakeMagics, p
 		return nil, err
 	}
 
-	hostKeyBytes := MarshalPublicKey(priv.PublicKey())
+	hostKeyBytes := priv.PublicKey().Marshal()
 
 	serializedEphKey := elliptic.Marshal(kex.curve, ephKey.PublicKey.X, ephKey.PublicKey.Y)
 

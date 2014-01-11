@@ -81,7 +81,7 @@ func TestKeyMarshalParse(t *testing.T) {
 	keys := []Signer{rsaKey, dsaKey, ecdsaKey, ecdsa384Key, ecdsa521Key, testCertKey}
 	for _, priv := range keys {
 		pub := priv.PublicKey()
-		roundtrip, err := ParsePublicKey(MarshalPublicKey(pub))
+		roundtrip, err := ParsePublicKey(pub.Marshal())
 		if err != nil {
 			t.Errorf("ParsePublicKey(%T): %v", pub, err)
 		}
@@ -219,7 +219,7 @@ func getTestKey() (PublicKey, string) {
 
 	b := &bytes.Buffer{}
 	e := base64.NewEncoder(base64.StdEncoding, b)
-	e.Write(MarshalPublicKey(k))
+	e.Write(k.Marshal())
 	e.Close()
 
 	return k, b.String()

@@ -133,8 +133,7 @@ func TestHandshakeBasic(t *testing.T) {
 	}
 
 	pub := ecdsaKey.PublicKey()
-	want := fmt.Sprintf("%s %v %s %x", "addr", trC.remoteAddr, pub.PublicKeyAlgo(),
-		MarshalPublicKey(pub))
+	want := fmt.Sprintf("%s %v %s %x", "addr", trC.remoteAddr, pub.PublicKeyAlgo(), pub.Marshal())
 	if want != checker.calls[0] {
 		t.Errorf("got %q want %q for host key check", checker.calls[0], want)
 	}

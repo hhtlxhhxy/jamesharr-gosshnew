@@ -183,7 +183,7 @@ func MarshalAuthorizedKey(key PublicKey) []byte {
 	b.WriteString(key.PublicKeyAlgo())
 	b.WriteByte(' ')
 	e := base64.NewEncoder(base64.StdEncoding, b)
-	e.Write(MarshalPublicKey(key))
+	e.Write(key.Marshal())
 	e.Close()
 	b.WriteByte('\n')
 	return b.Bytes()
@@ -196,8 +196,7 @@ type PublicKey interface {
 	PublicKeyAlgo() string
 
 	// Marshal returns the serialized key data in SSH wire format,
-	// without the name prefix.  Callers should typically use
-	// MarshalPublicKey().
+	// with the name prefix.
 	Marshal() []byte
 
 	// Verify that sig is a signature on the given data using this
@@ -223,38 +222,41 @@ func (r *rsaPublicKey) PublicKeyAlgo() string {
 
 // parseRSA parses an RSA key according to RFC 4253, section 6.6.
 func parseRSA(in []byte) (out PublicKey, rest []byte, err error) {
-	key := new(rsa.PublicKey)
-	bigE, in, ok := parseInt(in)
-	if !ok {
-		return nil, nil, errShortRead
+	var w struct {
+		E    *big.Int
+		N    *big.Int
+		Rest []byte `ssh:"rest"`
 	}
-	if bigE.BitLen() > 24 {
+	if err := Unmarshal(in, &w); err != nil {
+		return nil, nil, err
+	}
+
+	if w.E.BitLen() > 24 {
 		return nil, nil, errors.New("ssh: exponent too large")
 	}
-	e := bigE.Int64()
+	e := w.E.Int64()
 	if e < 3 || e&1 == 0 {
 		return nil, nil, errors.New("ssh: incorrect exponent")
 	}
+
+	var key rsa.PublicKey
 	key.E = int(e)
-
-	if key.N, in, ok = parseInt(in); !ok {
-		return nil, nil, errShortRead
-	}
-
-	return (*rsaPublicKey)(key), in, nil
+	key.N = w.N
+	return (*rsaPublicKey)(&key), in, nil
 }
 
 func (r *rsaPublicKey) Marshal() []byte {
-	// See RFC 4253, section 6.6.
 	e := new(big.Int).SetInt64(int64(r.E))
-	length := intLength(e)
-	length += intLength(r.N)
-
-	ret := make([]byte, length)
-	rest := marshalInt(ret, e)
-	marshalInt(rest, r.N)
-
-	return ret
+	wirekey := struct {
+		Name string
+		E    *big.Int
+		N    *big.Int
+	}{
+		KeyAlgoRSA,
+		e,
+		r.N,
+	}
+	return Marshal(wirekey)
 }
 
 func (r *rsaPublicKey) Verify(data []byte, sig *Signature) bool {
@@ -297,41 +299,35 @@ func (r *dsaPublicKey) PublicKeyAlgo() string {
 
 // parseDSA parses an DSA key according to RFC 4253, section 6.6.
 func parseDSA(in []byte) (out PublicKey, rest []byte, err error) {
-	key := new(dsa.PublicKey)
-	var ok bool
-	if key.P, in, ok = parseInt(in); !ok {
-		return nil, nil, errShortRead
+	var w struct {
+		P, Q, G, Y *big.Int
+		Rest       []byte `ssh:"rest"`
+	}
+	if err := Unmarshal(in, &w); err != nil {
+		return nil, nil, err
 	}
 
-	if key.Q, in, ok = parseInt(in); !ok {
-		return nil, nil, errShortRead
-	}
-
-	if key.G, in, ok = parseInt(in); !ok {
-		return nil, nil, errShortRead
-	}
-
-	if key.Y, in, ok = parseInt(in); !ok {
-		return nil, nil, errShortRead
-	}
-
-	return (*dsaPublicKey)(key), in, nil
+	key := &dsaPublicKey{}
+	key.P = w.P
+	key.Q = w.Q
+	key.G = w.G
+	key.Y = w.Y
+	return key, w.Rest, nil
 }
 
-func (r *dsaPublicKey) Marshal() []byte {
-	// See RFC 4253, section 6.6.
-	length := intLength(r.P)
-	length += intLength(r.Q)
-	length += intLength(r.G)
-	length += intLength(r.Y)
+func (k *dsaPublicKey) Marshal() []byte {
+	w := struct {
+		Name       string
+		P, Q, G, Y *big.Int
+	}{
+		k.PublicKeyAlgo(),
+		k.P,
+		k.Q,
+		k.G,
+		k.Y,
+	}
 
-	ret := make([]byte, length)
-	rest := marshalInt(ret, r.P)
-	rest = marshalInt(rest, r.Q)
-	rest = marshalInt(rest, r.G)
-	marshalInt(rest, r.Y)
-
-	return ret
+	return Marshal(w)
 }
 
 func (k *dsaPublicKey) Verify(data []byte, sig *Signature) bool {
@@ -456,15 +452,17 @@ func parseECDSA(in []byte) (out PublicKey, rest []byte, err error) {
 func (key *ecdsaPublicKey) Marshal() []byte {
 	// See RFC 5656, section 3.1.
 	keyBytes := elliptic.Marshal(key.Curve, key.X, key.Y)
+	w := struct {
+		Name string
+		ID   string
+		Key  []byte
+	}{
+		key.PublicKeyAlgo(),
+		key.nistID(),
+		keyBytes,
+	}
 
-	ID := key.nistID()
-	length := stringLength(len(ID))
-	length += stringLength(len(keyBytes))
-
-	ret := make([]byte, length)
-	r := marshalString(ret, []byte(ID))
-	r = marshalString(r, keyBytes)
-	return ret
+	return Marshal(w)
 }
 
 func (key *ecdsaPublicKey) Verify(data []byte, sig *Signature) bool {

@@ -263,7 +263,7 @@ func certToPrivAlgo(algo string) string {
 func (cert *OpenSSHCertV01) BytesForSigning() []byte {
 	c2 := *cert
 	c2.Signature = nil
-	out := MarshalPublicKey(&c2)
+	out := c2.Marshal()
 	// Drop trailing signature length.
 	return out[:len(out)-4]
 }
@@ -279,17 +279,19 @@ func (c *OpenSSHCertV01) Marshal() []byte {
 		CriticalOptions: marshalTuples(c.CriticalOptions),
 		Extensions:      marshalTuples(c.Extensions),
 		Reserved:        c.Reserved,
-		SignatureKey:    MarshalPublicKey(c.SignatureKey),
+		SignatureKey:    c.SignatureKey.Marshal(),
 	}
 	if c.Signature != nil {
 		generic.Signature = Marshal(*c.Signature)
 	}
 	genericBytes := Marshal(generic)
-
+	keyBytes := c.Key.Marshal()
+	_, keyBytes, _ = parseString(keyBytes)
 	prefix := Marshal(struct {
+		Name  string
 		Nonce []byte
 		Key   []byte `ssh:"rest"`
-	}{c.Nonce, c.Key.Marshal()})
+	}{c.PublicKeyAlgo(), c.Nonce, keyBytes})
 
 	result := make([]byte, len(prefix)+len(genericBytes))
 	dst := result
