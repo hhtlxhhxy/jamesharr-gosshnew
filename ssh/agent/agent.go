@@ -100,7 +100,7 @@ type AgentKey struct {
 // String returns the storage form of an agent key with the format, base64
 // encoded serialized key, and the comment if it is not empty.
 func (ak *AgentKey) String() string {
-	k, _, err := ssh.ParsePublicKey(ak.blob)
+	k, err := ssh.ParsePublicKey(ak.blob)
 	if err != nil {
 		return fmt.Sprintf("ssh: malformed key: %v", err)
 	}
@@ -116,8 +116,7 @@ func (ak *AgentKey) String() string {
 
 // Key returns an agent's public key as one of the supported key or certificate types.
 func (ak *AgentKey) Key() (ssh.PublicKey, error) {
-	key, _, err := ssh.ParsePublicKey(ak.blob)
-	return key, err
+	return ssh.ParsePublicKey(ak.blob)
 }
 
 func parseAgentKey(in []byte) (out *AgentKey, rest []byte, err error) {

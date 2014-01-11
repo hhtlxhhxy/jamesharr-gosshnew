@@ -182,12 +182,9 @@ func parseCert(in []byte, privAlgo string) (*OpenSSHCertV01, error) {
 		return nil, err
 	}
 	c.Reserved = g.Reserved
-	k, rest, err := ParsePublicKey(g.SignatureKey)
+	k, err := ParsePublicKey(g.SignatureKey)
 	if err != nil {
 		return nil, err
-	}
-	if len(rest) > 0 {
-		return nil, errors.New("ssh: trailing junk after signature key")
 	}
 
 	c.SignatureKey = k

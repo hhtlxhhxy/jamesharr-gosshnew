@@ -314,7 +314,7 @@ userAuthLoop:
 					break
 				}
 				signedData := buildDataSignedForAuth(s.transport.getSessionID(), userAuthReq, algoBytes, pubKey)
-				key, _, err := ParsePublicKey(pubKey)
+				key, err := ParsePublicKey(pubKey)
 				if err != nil {
 					return err
 				}

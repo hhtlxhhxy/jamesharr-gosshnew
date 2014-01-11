@@ -69,7 +69,7 @@ func parseAuthorizedKey(in []byte) (out PublicKey, comment string, err error) {
 		return nil, "", err
 	}
 	key = key[:n]
-	out, _, err = ParsePublicKey(key)
+	out, err = ParsePublicKey(key)
 	if err != nil {
 		return nil, "", err
 	}
@@ -161,15 +161,18 @@ func ParseAuthorizedKey(in []byte) (out PublicKey, comment string, options []str
 
 // ParsePublicKey parses an SSH public key formatted for use in
 // the SSH wire protocol according to RFC 4253, section 6.6.
-func ParsePublicKey(in []byte) (out PublicKey, rest []byte, err error) {
-	// TODO(hanwen): drop rest return value.
-	// TODO(hanwen): use error return rather than bool.
+func ParsePublicKey(in []byte) (out PublicKey, err error) {
 	algo, in, ok := parseString(in)
 	if !ok {
-		return nil, nil, errShortRead
+		return nil, errShortRead
+	}
+	var rest []byte
+	out, rest, err = parsePubKey(in, string(algo))
+	if len(rest) > 0 {
+		return nil, errors.New("ssh: trailing junk in public key")
 	}
 
-	return parsePubKey(in, string(algo))
+	return out, err
 }
 
 // MarshalAuthorizedKey returns a byte stream suitable for inclusion
@@ -556,7 +559,7 @@ func NewPublicKey(k interface{}) (PublicKey, error) {
 	return sshKey, nil
 }
 
-// ParsePublicKey parses a PEM encoded private key. It supports
+// ParsePrivateKey parses a PEM encoded private key. It supports
 // PKCS#1, RSA, DSA and ECDSA private keys.
 func ParsePrivateKey(pemBytes []byte) (Signer, error) {
 	block, _ := pem.Decode(pemBytes)

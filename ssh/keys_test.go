@@ -81,13 +81,9 @@ func TestKeyMarshalParse(t *testing.T) {
 	keys := []Signer{rsaKey, dsaKey, ecdsaKey, ecdsa384Key, ecdsa521Key, testCertKey}
 	for _, priv := range keys {
 		pub := priv.PublicKey()
-		roundtrip, rest, err := ParsePublicKey(MarshalPublicKey(pub))
+		roundtrip, err := ParsePublicKey(MarshalPublicKey(pub))
 		if err != nil {
 			t.Errorf("ParsePublicKey(%T): %v", pub, err)
-		}
-
-		if len(rest) > 0 {
-			t.Errorf("ParsePublicKey(%T): trailing junk", pub)
 		}
 
 		k1 := rawKey(pub)

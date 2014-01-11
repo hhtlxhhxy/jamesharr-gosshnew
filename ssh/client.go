@@ -81,12 +81,9 @@ func (c *connection) clientHandshake(dialAddress string, config *ClientConfig) e
 // verifyHostKeySignature verifies the host key obtained in the key
 // exchange.
 func verifyHostKeySignature(hostKeyAlgo string, result *kexResult) error {
-	hostKey, rest, err := ParsePublicKey(result.HostKey)
+	hostKey, err := ParsePublicKey(result.HostKey)
 	if err != nil {
 		return err
-	}
-	if len(rest) > 0 {
-		return errors.New("ssh: trailing junk in hostkey")
 	}
 
 	sig, rest, ok := parseSignatureBody(result.Signature)
