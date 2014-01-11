@@ -242,7 +242,7 @@ func parseRSA(in []byte) (out PublicKey, rest []byte, err error) {
 	var key rsa.PublicKey
 	key.E = int(e)
 	key.N = w.N
-	return (*rsaPublicKey)(&key), in, nil
+	return (*rsaPublicKey)(&key), w.Rest, nil
 }
 
 func (r *rsaPublicKey) Marshal() []byte {

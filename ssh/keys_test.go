@@ -274,7 +274,15 @@ func testAuthorizedKeys(t *testing.T, authKeys []byte, expected []authResult) {
 	if !reflect.DeepEqual(values, expected) {
 		t.Errorf("got %v, expected %v", values, expected)
 	}
+}
 
+func TestAuthorizedKeyBasic(t *testing.T) {
+	pub, pubSerialized := getTestKey()
+	line := "ssh-rsa " + pubSerialized + " user@host"
+	testAuthorizedKeys(t, []byte(line),
+		[]authResult{
+			{pub, nil, "user@host", "", true},
+		})
 }
 
 func TestAuth(t *testing.T) {
