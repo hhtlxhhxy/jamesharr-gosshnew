@@ -55,8 +55,7 @@ func init() {
 		CriticalOptions: map[string]string{},
 		Extensions:      map[string]string{},
 	}
-	sig, _ := rsaKey.Sign(rand.Reader, testCert.BytesForSigning())
-	testCert.Signature = sig
+	testCert.SignCert(rsaKey)
 	testCertKey = &testSigner{
 		Signer: ecdsaKey,
 		pub:    testCert,
@@ -267,12 +266,13 @@ func testAuthorizedKeys(t *testing.T, authKeys []byte, expected []authResult) {
 		var err error
 		r.pubKey, r.comments, r.options, rest, err = ParseAuthorizedKey(rest)
 		r.ok = (err == nil)
+		t.Log(err)
 		r.rest = string(rest)
 		values = append(values, r)
 	}
 
 	if !reflect.DeepEqual(values, expected) {
-		t.Errorf("got %v, expected %v", values, expected)
+		t.Errorf("got %#v, expected %#v", values, expected)
 	}
 }
 

@@ -220,20 +220,38 @@ func (s *openSSHCertSigner) PublicKey() PublicKey {
 	return s.pub
 }
 
-// validateOpenSSHCertV01Signature uses the cert's SignatureKey to verify that
-// the cert's Signature.Blob is the result of signing the cert bytes starting
-// from the algorithm string and going up to and including the SignatureKey.
-func validateOpenSSHCertV01Signature(cert *OpenSSHCertV01) bool {
-	return cert.SignatureKey.Verify(cert.BytesForSigning(), cert.Signature)
+// Validate checks the signature and timestamp on the certificate.
+// Before accepting a cert for user login, the following other
+// information should be verified: whether all CriticalOptions are
+// recognized, whether the signature key is a user CA, whether the key
+// Serial has been revoked, if the Type is a UserCert, whether the
+// username matches ValidPrincipal, and whether the remote address
+// matches the source-address CriticalOption if given. The latter two
+// are available in ConnMetadata argument of the server auth
+// callbacks.
+func (c *OpenSSHCertV01) Validate(now time.Time) bool {
+	unixNow := CertTime(now.Unix())
+	if unixNow < c.ValidAfter {
+		return false
+	}
+	if !c.ValidBefore.IsInfinite() && unixNow >= c.ValidBefore {
+		return false
+	}
+	return c.SignatureKey.Verify(c.bytesForSigning(), c.Signature)
 }
 
-// SignCert has an authority sign the certificate. It sets the
-// Signature and SignatureKey of the cert.
+// SignCert sets the SignatureKey to the authority's public key, and
+// stores a Signature by the authority in the certificate.
 func (c *OpenSSHCertV01) SignCert(authority Signer) error {
+	// Should set Nonce on the cert before signing?
 	pub := authority.PublicKey()
+
+	c.Nonce = make([]byte, 32)
+	rand.Reader.Read(c.Nonce)
 	c.SignatureKey = pub
+
 	// Should get rand from some config?
-	sig, err := authority.Sign(rand.Reader, c.BytesForSigning())
+	sig, err := authority.Sign(rand.Reader, c.bytesForSigning())
 	if err != nil {
 		return err
 	}
@@ -260,7 +278,7 @@ func certToPrivAlgo(algo string) string {
 	panic("unknown cert algorithm")
 }
 
-func (cert *OpenSSHCertV01) BytesForSigning() []byte {
+func (cert *OpenSSHCertV01) bytesForSigning() []byte {
 	c2 := *cert
 	c2.Signature = nil
 	out := c2.Marshal()

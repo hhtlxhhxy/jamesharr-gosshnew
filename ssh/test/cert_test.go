@@ -30,7 +30,9 @@ func TestCertLogin(t *testing.T) {
 		Type:            ssh.UserCert,
 		ValidBefore:     ssh.CertTimeInfinity,
 	}
-	cert.SignCert(caAuthKey)
+	if err := cert.SignCert(caAuthKey); err != nil {
+		t.Fatalf("SetSignature: %v", err)
+	}
 
 	certSigner, err := ssh.NewCertSigner(cert, clientKey)
 	if err != nil {
